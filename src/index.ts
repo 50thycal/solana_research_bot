@@ -1,4 +1,4 @@
-import { config } from './config';
+import { config, validateCollectConfig } from './config';
 import { openDatabase, closeDatabase } from './db/init';
 import { markStaleRunsAsFailed } from './db/queries/runs';
 
@@ -9,15 +9,27 @@ async function main(): Promise<void> {
     timestamp: new Date().toISOString(),
   }));
 
+  // Validate Helius credentials before opening the database in collect mode
+  if (config.mode === 'collect') {
+    validateCollectConfig();
+  }
+
   // Initialize database and run migrations
   const db = openDatabase(config.dbPath);
 
   // Crash recovery: mark any stale 'running' rows as 'failed'
-  const staleCount = markStaleRunsAsFailed(db);
-  if (staleCount > 0) {
-    console.log(JSON.stringify({
-      event: 'crash_recovery',
-      staleRunsMarkedFailed: staleCount,
+  try {
+    const staleCount = markStaleRunsAsFailed(db);
+    if (staleCount > 0) {
+      console.log(JSON.stringify({
+        event: 'crash_recovery',
+        staleRunsMarkedFailed: staleCount,
+      }));
+    }
+  } catch (err) {
+    console.error(JSON.stringify({
+      event: 'crash_recovery_error',
+      error: err instanceof Error ? err.message : String(err),
     }));
   }
 
