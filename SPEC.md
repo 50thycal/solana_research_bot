@@ -20,24 +20,35 @@ MODE=collect | label
 **Purpose:** Observe new pump.fun tokens for a defined window, collect snapshots, exit.
 **Lifecycle:**
 1. **Init** — Generate `run_id` (UUIDv4), open SQLite, run migrations, insert `runs` row with status `running`.
-2. **Observe** — Connect Helius WebSocket, watch for pump.fun Create instructions. For each new token, insert `tokens` row and begin snapshot tracking. At each snapshot interval (every 10 seconds), batch-fetch bonding curve accounts and transaction signatures for all tracked tokens. Insert `snapshots` rows.
-3. **Outcome polling** — After observation window closes, stop watching for new tokens. Continue polling existing tracked tokens for `OUTCOME_WINDOW_MINUTES` at a wider interval (every 30 seconds) to capture price trajectory for labeling.
+2. **Observe** — Connect Helius WebSocket, watch for pump.fun Create instructions. For each new token, insert `tokens` row (+ `token_runs` row) and begin snapshot tracking. At each snapshot interval, batch-fetch bonding curve accounts and transaction signatures for all tracked tokens. Insert `snapshots` rows. Each token uses a **per-token snapshot cadence** based on its age (see below).
+3. **Outcome tracking (per-token)** — After observation window closes, stop watching for new tokens. Continue polling tokens that haven't yet completed their outcome horizon. A token is done when `entry_time + OUTCOME_WINDOW_SECONDS` has elapsed (if entry triggered) or when `created_at + ENTRY_MAX_SECONDS + OUTCOME_WINDOW_SECONDS` has elapsed (if no entry yet). Tokens are dropped from tracking individually as they complete. A hard cap of `MAX_TRACK_MINUTES` from run start prevents indefinite tracking.
 4. **Finalize** — Update `runs` row with `completed_at`, token count, status `complete`. WAL checkpoint. Exit 0.
+
+**Per-token snapshot cadence:**
+| Token age (seconds since creation) | Snapshot interval | Phase tag | Rationale |
+|---|---|---|---|
+| 0–120 | `EARLY_SNAPSHOT_INTERVAL_MS` (default 5000) | `early` | High-frequency during the critical entry window |
+| 120+ (observation phase) | `SNAPSHOT_INTERVAL_MS` (default 10000) | `observe` | Standard observation cadence |
+| Post-entry / outcome tracking | `OUTCOME_SNAPSHOT_INTERVAL_MS` (default 30000) | `outcome` | Lower frequency for outcome measurement |
+
+This means a token created at minute 29 of a 30-minute observation window still gets its full early-window coverage at 5s intervals, then outcome tracking until its individual horizon is complete.
+
 **On SIGTERM:** Update `runs` row with status `partial`, checkpoint SQLite, exit 0.
 **Environment variables:**
 | Variable | Default | Purpose |
 |---|---|---|
 | `MODE` | `collect` | Script mode |
 | `OBSERVATION_WINDOW_MINUTES` | `30` | How long to watch for new tokens |
-| `OUTCOME_WINDOW_MINUTES` | `10` | How long to continue polling after observation ends |
+| `EARLY_SNAPSHOT_INTERVAL_MS` | `5000` | Snapshot interval for tokens in first 120s of life |
 | `SNAPSHOT_INTERVAL_MS` | `10000` | Milliseconds between snapshot rounds during observation |
-| `OUTCOME_SNAPSHOT_INTERVAL_MS` | `30000` | Milliseconds between snapshot rounds during outcome window |
+| `OUTCOME_SNAPSHOT_INTERVAL_MS` | `30000` | Milliseconds between snapshot rounds during outcome tracking |
+| `MAX_TRACK_MINUTES` | `50` | Hard cap on total run duration (observation + per-token outcome tracking) |
 | `MAX_TOKENS_PER_RUN` | `150` | Safety cap — stop tracking new tokens after this count |
 | `HELIUS_API_KEY` | (required) | Helius API key |
 | `HELIUS_RPC_URL` | (required) | Helius RPC endpoint |
 | `HELIUS_WS_URL` | (required) | Helius WebSocket endpoint |
 | `DB_PATH` | `/data/research.db` | SQLite file path (Railway Volume mount) |
-**Total run time:** ~42 minutes (30 observe + 10 outcome + ~2 min init/finalize).
+**Total run time:** ~52 minutes worst case (30 observe + up to ~20 min for last-discovered tokens to complete outcome horizon + ~2 min init/finalize). Typically shorter because most tokens' outcome windows overlap with the observation phase.
 ### Mode: `label`
 **Purpose:** Read snapshots from past runs, apply a parameterized entry definition, compute outcome metrics, write to `outcomes` table. Can be re-run with different parameters on the same data.
 **Lifecycle:**
@@ -74,19 +85,22 @@ Rotate the cron offset periodically (e.g., change from `0 */4` to `30 */4` weekl
 Tracks every collector invocation for data integrity.
 ```sql
 CREATE TABLE runs (
-    run_id          TEXT PRIMARY KEY,
-    mode            TEXT NOT NULL,                -- 'collect' or 'label'
-    started_at      INTEGER NOT NULL,             -- unix ms
-    completed_at    INTEGER,                      -- unix ms, NULL if incomplete
-    tokens_observed INTEGER DEFAULT 0,
-    entries_triggered INTEGER DEFAULT 0,          -- populated by label mode
-    status          TEXT NOT NULL DEFAULT 'running', -- 'running','complete','partial','failed'
-    config_json     TEXT                          -- snapshot of env config for reproducibility
+    run_id              TEXT PRIMARY KEY,
+    mode                TEXT NOT NULL,                -- 'collect' or 'label'
+    started_at          INTEGER NOT NULL,             -- unix ms
+    completed_at        INTEGER,                      -- unix ms, NULL if incomplete
+    tokens_observed     INTEGER DEFAULT 0,
+    entries_triggered   INTEGER DEFAULT 0,            -- populated by label mode
+    status              TEXT NOT NULL DEFAULT 'running', -- 'running','complete','partial','failed'
+    ws_disconnect_count INTEGER DEFAULT 0,            -- number of WebSocket disconnects during run
+    ws_disconnect_ms    INTEGER DEFAULT 0,            -- total milliseconds spent disconnected
+    config_json         TEXT                          -- snapshot of env config for reproducibility
 );
 ```
+**`ws_disconnect_count` and `ws_disconnect_ms`:** Track WebSocket reliability per run. Tokens created during a disconnect are silently missed. These fields let analysis queries filter out runs with excessive gaps (e.g., `WHERE ws_disconnect_ms < 30000`) to avoid sampling bias from unreliable runs.
 No indexes needed beyond primary key. Low row count.
 ### Table: `tokens`
-Registry of every token observed.
+Global registry of every token observed. A mint appears once regardless of how many runs see it.
 ```sql
 CREATE TABLE tokens (
     mint                    TEXT PRIMARY KEY,
@@ -94,17 +108,31 @@ CREATE TABLE tokens (
     name                    TEXT,
     symbol                  TEXT,
     created_at              INTEGER NOT NULL,     -- on-chain timestamp, unix seconds
-    first_seen_at           INTEGER NOT NULL,     -- collector timestamp, unix ms
     initial_virtual_sol     REAL,                 -- starting bonding curve SOL reserves
     initial_virtual_token   REAL,                 -- starting bonding curve token reserves
     initial_price_sol       REAL,                 -- derived: initial_virtual_sol / initial_virtual_token
-    run_id                  TEXT NOT NULL,
-    FOREIGN KEY (run_id) REFERENCES runs(run_id)
+    bonding_curve_pda       TEXT NOT NULL          -- bonding curve account address
 );
-CREATE INDEX idx_tokens_run ON tokens(run_id);
 CREATE INDEX idx_tokens_creator ON tokens(creator);
 ```
 **All columns mandatory except:** `name`, `symbol` (some tokens have empty metadata). `initial_virtual_sol`, `initial_virtual_token`, `initial_price_sol` are mandatory in practice but nullable in schema to handle edge cases where the first bonding curve fetch fails.
+
+**Insert logic:** `INSERT OR IGNORE` — if a token was already seen in a prior run, skip the insert. Token metadata is immutable on-chain so there's nothing to update.
+
+### Table: `token_runs`
+Maps tokens to the runs that observed them. A token can appear in multiple runs if it's still active hours later.
+```sql
+CREATE TABLE token_runs (
+    run_id          TEXT NOT NULL,
+    mint            TEXT NOT NULL,
+    first_seen_at   INTEGER NOT NULL,             -- collector timestamp for THIS run, unix ms
+    PRIMARY KEY (run_id, mint),
+    FOREIGN KEY (run_id) REFERENCES runs(run_id),
+    FOREIGN KEY (mint) REFERENCES tokens(mint)
+);
+CREATE INDEX idx_token_runs_mint ON token_runs(mint);
+```
+**Why a separate table:** The same mint can appear across runs. Keeping `tokens` as a global registry avoids duplicating metadata, while `token_runs` tracks per-run observation context. Snapshots already carry `run_id` so joins are straightforward.
 ### Table: `snapshots`
 One row per token per observation interval. Primary analytical table.
 ```sql
@@ -114,7 +142,7 @@ CREATE TABLE snapshots (
     run_id                  TEXT NOT NULL,
     snapshot_at             INTEGER NOT NULL,     -- unix ms
     seconds_since_creation  REAL NOT NULL,        -- elapsed from token created_at
-    phase                   TEXT NOT NULL,         -- 'observe' or 'outcome'
+    phase                   TEXT NOT NULL,         -- 'early', 'observe', or 'outcome'
     -- Bonding curve state (directly observed)
     virtual_sol_reserves    REAL,
     virtual_token_reserves  REAL,
@@ -131,6 +159,7 @@ CREATE TABLE snapshots (
     unique_sellers          INTEGER,              -- estimated distinct sell wallets
     sample_size             INTEGER,              -- how many txs were parsed to estimate buy/sell
     sample_total            INTEGER,              -- total txs available when sample was taken
+    sample_method           TEXT,                 -- 'random_uniform' (for future-proofing if strategy changes)
     -- Derived features (computed at insert time from current + prior snapshots)
     buy_velocity            REAL,                 -- buy_count / seconds_since_creation
     volume_velocity_sol     REAL,                 -- approx volume / seconds_since_creation
@@ -205,14 +234,14 @@ These come from a single `getAccountInfo` call on the bonding curve PDA (batchab
 ### Sampling strategy for Tier 3
 At each snapshot interval, for each tracked token:
 1. Call `getSignaturesForAddress` on the bonding curve → get full signature list.
-2. Take the **most recent 10 signatures** that haven't been parsed yet.
+2. Select **up to 10 signatures** using **uniform random sampling** from the full list (excluding any already parsed in prior snapshots for this token). If <= 10 unparsed signatures remain, parse all of them.
 3. Call `getTransaction` on each (batchable).
 4. Parse each transaction to classify as buy or sell (check if SOL moved to or from the curve).
 5. Extract wallet addresses.
-6. Maintain a running in-memory set of wallets per token across snapshots.
-7. Record `sample_size` (how many txs parsed this snapshot) and `sample_total` (total available).
-**Why most recent 10:** Recent transactions are more indicative of current momentum. We accept undercounting for total accuracy in exchange for credit efficiency.
-**Explicit approximation acknowledgment:** `unique_buyers` will be an undercount because we don't parse every transaction. `buy_count` and `sell_count` are extrapolated: `estimated_buys = (buys_in_sample / sample_size) * total_tx_count`. This is documented in the schema and must be accounted for in analysis.
+6. Maintain a running in-memory set of parsed signature IDs + wallet sets per token across snapshots.
+7. Record `sample_size` (how many txs parsed this snapshot), `sample_total` (total available), and `sample_method = 'random_uniform'`.
+**Why random uniform:** Sampling only the most recent transactions biases extrapolation toward current activity patterns. If early transactions were predominantly buys and recent ones are mixed, a recency-biased sample underestimates total buys. Random sampling makes the extrapolation assumption (`buys_in_sample / sample_size ≈ buys_in_total / total`) defensible. The cost is identical — same number of `getTransaction` calls.
+**Explicit approximation acknowledgment:** `unique_buyers` will be an undercount because we don't parse every transaction. `buy_count` and `sell_count` are extrapolated: `estimated_buys = (buys_in_sample / sample_size) * total_tx_count`. This is documented in the schema and must be accounted for in analysis. The random sampling makes this extrapolation statistically valid (unlike recency-biased sampling).
 ### Derived features (computed at insert, not fetched)
 | Feature | Formula | Notes |
 |---|---|---|
@@ -253,7 +282,7 @@ From all snapshots after entry and within the outcome window, compute:
 | `max_drawdown_pct` | `(min_price_after_entry - entry_price) / entry_price * 100` |
 | `final_gain_pct` | `(final_price - entry_price) / entry_price * 100` |
 | `hit_2x` | 1 if `max_price >= entry_price * 2`, else 0 |
-| `time_to_2x_seconds` | `max_price_seconds - entry_seconds` if hit_2x, else NULL |
+| `time_to_2x_seconds` | `first_2x_snapshot.seconds_since_creation - entry_seconds` — uses the **first** snapshot where `price >= entry_price * 2`, NOT the max price snapshot. NULL if never hit 2x. Granularity limited by snapshot interval. |
 | `time_to_peak_seconds` | `max_price_seconds - entry_seconds` |
 ### Categorical labels (NOT stored, derived at analysis time)
 For convenience during analysis, apply these as SQL views or in-query CASE statements:
@@ -280,14 +309,15 @@ Assuming N tokens currently tracked:
 | `getSignaturesForAddress` | `N` | Get tx signature list per token |
 | `getTransaction` | `min(N * 10, TX_SAMPLE_CAP)` | Parse sampled transactions |
 ### Per-run cost estimate
-**Assumptions:** 100 tokens observed, 30-minute observation (180 snapshot rounds at 10s interval), 10-minute outcome phase (20 rounds at 30s interval).
-| Phase | Rounds | getMultipleAccounts | getSignatures | getTransaction | Total calls |
+**Assumptions:** 100 tokens observed, 30-minute observation, per-token outcome tracking (up to ~20 min for late tokens), early-window 5s snapshots for first 120s per token.
+| Phase | Rounds (approx) | getMultipleAccounts | getSignatures | getTransaction | Total calls |
 |---|---|---|---|---|---|
-| Observe (ramp up) | 180 | ~100 | ~5,400 | ~5,400 | ~10,900 |
-| Outcome | 20 | ~20 | ~2,000 | 0 (skip sampling) | ~2,020 |
-| **Total** | | | | | **~12,920** |
-*Note: getSignatures and getTransaction counts are upper bounds. Early in a run, few tokens are tracked so actual call count is lower. The ramp-up is gradual — token count goes from 0 to N over 30 minutes.*
-**Revised realistic estimate:** ~6,000-8,000 calls per run, accounting for the ramp.
+| Early window (5s, first 120s/token) | ~24/token, overlaps with observe | ~150 | ~2,400 | ~2,400 | ~4,950 |
+| Observe (10s, 120s+ tokens) | ~150 | ~80 | ~4,500 | ~4,500 | ~9,080 |
+| Outcome tracking (30s) | ~30 | ~30 | ~3,000 | 0 (skip sampling) | ~3,030 |
+| **Total** | | | | | **~17,060** |
+*Note: These phases heavily overlap — early-window rounds happen during observation. Actual call count is lower because a token doesn't appear in all three phases simultaneously. getSignatures and getTransaction counts are upper bounds; early in a run, few tokens are tracked.*
+**Revised realistic estimate:** ~8,000-12,000 calls per run, accounting for the ramp and overlap.
 ### Safety limits
 | Limit | Value | Purpose |
 |---|---|---|
@@ -298,9 +328,9 @@ Assuming N tokens currently tracked:
 | Per-call delay | 50ms | Minimum delay between individual RPC calls to avoid rate limiting |
 | Batch delay | 200ms | Delay between snapshot rounds for different token batches |
 ### Credit budget per day (6 runs)
-- Estimated: ~48,000-78,000 calls/day
+- Estimated: ~48,000-72,000 calls/day
 - Helius free tier: 100,000 credits/day
-- **Headroom: ~22-52k credits** — sufficient buffer for retries and bursts
+- **Headroom: ~28-52k credits** — sufficient buffer for retries and bursts
 ### If approaching limits
 1. Reduce `MAX_TX_SAMPLE_PER_TOKEN` from 10 to 5.
 2. Increase `SNAPSHOT_INTERVAL_MS` from 10s to 15s.
@@ -345,9 +375,10 @@ After each `complete` run, copy the SQLite file to Railway's ephemeral storage o
 ### Phase 2: Database layer
 - [ ] Implement SQLite initialization with WAL mode and pragmas
 - [ ] Implement schema migration system (version-based, same pattern as trading bot)
-- [ ] Create v1 migration with all 4 tables (`runs`, `tokens`, `snapshots`, `outcomes`)
-- [ ] Implement `runs` CRUD (insert on start, update on complete/fail)
-- [ ] Implement `tokens` insert
+- [ ] Create v1 migration with all 5 tables (`runs`, `tokens`, `token_runs`, `snapshots`, `outcomes`)
+- [ ] Implement `runs` CRUD (insert on start, update on complete/fail, increment ws_disconnect fields)
+- [ ] Implement `tokens` insert (INSERT OR IGNORE for global registry)
+- [ ] Implement `token_runs` insert
 - [ ] Implement `snapshots` insert
 - [ ] Implement `outcomes` insert/delete (for re-labeling)
 - [ ] Add crash recovery check (mark stale `running` rows as `failed`)
@@ -379,8 +410,11 @@ After each `complete` run, copy the SQLite file to Railway's ephemeral storage o
 - [ ] Implement main collect loop:
   1. Init phase (run_id, DB, config)
   2. Observation phase (WebSocket + snapshot loop for N minutes)
-  3. Outcome phase (snapshot loop only, wider interval, no new tokens)
+  3. Per-token outcome tracking (tokens drop off individually as their outcome horizon completes)
   4. Finalize (update run, WAL checkpoint, exit)
+- [ ] Implement per-token snapshot cadence (early 5s / observe 10s / outcome 30s based on token age)
+- [ ] Implement per-token outcome horizon tracking (each token tracked until its entry_time + OUTCOME_WINDOW is satisfied)
+- [ ] Implement MAX_TRACK_MINUTES hard cap on total run duration
 - [ ] Implement SIGTERM handler (partial status, checkpoint, exit)
 - [ ] Implement MAX_TOKENS_PER_RUN cap
 - [ ] Implement WebSocket reconnection
