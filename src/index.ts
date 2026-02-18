@@ -1,6 +1,7 @@
 import { config, validateCollectConfig } from './config';
 import { openDatabase, closeDatabase } from './db/init';
 import { markStaleRunsAsFailed } from './db/queries/runs';
+import { runCollect } from './collector/collect';
 
 async function main(): Promise<void> {
   console.log(JSON.stringify({
@@ -35,9 +36,8 @@ async function main(): Promise<void> {
 
   try {
     if (config.mode === 'collect') {
-      // Phase 3+ will implement the collect logic
       console.log(JSON.stringify({ event: 'collect_start' }));
-      throw new Error('Collect mode not yet implemented');
+      await runCollect(db);
     } else if (config.mode === 'label') {
       // Phase 6 will implement the label logic
       console.log(JSON.stringify({ event: 'label_start' }));
@@ -51,9 +51,10 @@ async function main(): Promise<void> {
 }
 
 // Handle SIGTERM for graceful shutdown
+// Note: collect mode installs its own SIGTERM handler that handles partial status + checkpoint.
+// This is a fallback for label mode or pre-init SIGTERM.
 process.on('SIGTERM', () => {
   console.log(JSON.stringify({ event: 'sigterm_received' }));
-  // Phase 5 will implement proper SIGTERM handling with partial status + checkpoint
   process.exit(0);
 });
 
