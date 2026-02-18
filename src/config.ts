@@ -14,6 +14,7 @@ function envInt(key: string, defaultValue: number): number {
   if (raw === undefined) return defaultValue;
   const parsed = parseInt(raw, 10);
   if (isNaN(parsed)) throw new Error(`Invalid integer for ${key}: ${raw}`);
+  if (parsed <= 0) throw new Error(`${key} must be a positive integer, got: ${parsed}`);
   return parsed;
 }
 
@@ -22,19 +23,22 @@ function envFloat(key: string, defaultValue: number): number {
   if (raw === undefined) return defaultValue;
   const parsed = parseFloat(raw);
   if (isNaN(parsed)) throw new Error(`Invalid float for ${key}: ${raw}`);
+  if (parsed < 0) throw new Error(`${key} must be non-negative, got: ${parsed}`);
   return parsed;
 }
 
-export const config = {
-  mode: envStr('MODE', 'collect') as 'collect' | 'label',
+const mode = envStr('MODE', 'collect') as 'collect' | 'label';
 
-  // Helius
+export const config = {
+  mode,
+
+  // Helius (required for collect mode, validated at startup)
   heliusApiKey: envStr('HELIUS_API_KEY', ''),
   heliusRpcUrl: envStr('HELIUS_RPC_URL', ''),
   heliusWsUrl: envStr('HELIUS_WS_URL', ''),
 
   // Database
-  dbPath: envStr('DB_PATH', '/data/research.db'),
+  dbPath: envStr('DB_PATH', './data/research.db'),
 
   // Collect mode
   observationWindowMinutes: envInt('OBSERVATION_WINDOW_MINUTES', 30),
@@ -55,6 +59,19 @@ export const config = {
   entryMaxSeconds: envInt('ENTRY_MAX_SECONDS', 120),
   outcomeWindowSeconds: envInt('OUTCOME_WINDOW_SECONDS', 600),
 } as const;
+
+/** Validate that required Helius credentials are set for collect mode */
+export function validateCollectConfig(): void {
+  const missing: string[] = [];
+  if (!config.heliusApiKey) missing.push('HELIUS_API_KEY');
+  if (!config.heliusRpcUrl) missing.push('HELIUS_RPC_URL');
+  if (!config.heliusWsUrl) missing.push('HELIUS_WS_URL');
+  if (missing.length > 0) {
+    throw new Error(
+      `Collect mode requires the following environment variables: ${missing.join(', ')}`
+    );
+  }
+}
 
 /** JSON snapshot of config for storing in runs table */
 export function configSnapshot(): string {
