@@ -2,6 +2,7 @@ import { config, validateCollectConfig } from './config';
 import { openDatabase, closeDatabase } from './db/init';
 import { markStaleRunsAsFailed } from './db/queries/runs';
 import { runCollect } from './collector/collect';
+import { runLabel } from './labeler/label';
 
 async function main(): Promise<void> {
   console.log(JSON.stringify({
@@ -39,9 +40,8 @@ async function main(): Promise<void> {
       console.log(JSON.stringify({ event: 'collect_start' }));
       await runCollect(db);
     } else if (config.mode === 'label') {
-      // Phase 6 will implement the label logic
       console.log(JSON.stringify({ event: 'label_start' }));
-      throw new Error('Label mode not yet implemented');
+      await runLabel(db);
     } else {
       throw new Error(`Unknown mode: ${config.mode}`);
     }
