@@ -134,31 +134,50 @@ export class RpcClient {
 
   /**
    * Fetch transaction signatures for a bonding curve PDA.
-   * Returns the full list of confirmed signatures (most recent first).
+   * Returns confirmed signatures most-recent-first.
+   *
+   * Paginates automatically when the result set hits the per-call limit (1000),
+   * accumulating up to `maxResults` total (default 5000). This ensures
+   * totalTxCount is accurate for high-volume tokens that exceed 1000 transactions,
+   * which would otherwise freeze the extrapolation counter at 1000.
    */
   async fetchSignatures(
     bondingCurvePda: string,
-    options?: { limit?: number; before?: string }
+    options?: { limit?: number; before?: string; maxResults?: number }
   ): Promise<ConfirmedSignatureInfo[]> {
-    await sleep(PER_CALL_DELAY_MS);
+    const pageSize = Math.min(options?.limit ?? 1000, 1000); // RPC max is 1000
+    const maxResults = options?.maxResults ?? pageSize;
+    const all: ConfirmedSignatureInfo[] = [];
+    let cursor: string | undefined = options?.before;
 
-    try {
-      return await this.conn.getSignaturesForAddress(
-        new PublicKey(bondingCurvePda),
-        {
-          limit: options?.limit ?? 1000,
-          before: options?.before,
-        },
-        'confirmed'
-      );
-    } catch (err) {
-      console.error(JSON.stringify({
-        event: 'rpc_fetch_signatures_error',
-        pda: bondingCurvePda,
-        error: err instanceof Error ? err.message : String(err),
-      }));
-      return [];
-    }
+    do {
+      await sleep(PER_CALL_DELAY_MS);
+
+      try {
+        const page = await this.conn.getSignaturesForAddress(
+          new PublicKey(bondingCurvePda),
+          { limit: pageSize, before: cursor },
+          'confirmed'
+        );
+
+        all.push(...page);
+
+        // If the page is smaller than the page size we have everything
+        if (page.length < pageSize) break;
+
+        // Advance cursor to the oldest signature on this page for next iteration
+        cursor = page[page.length - 1].signature;
+      } catch (err) {
+        console.error(JSON.stringify({
+          event: 'rpc_fetch_signatures_error',
+          pda: bondingCurvePda,
+          error: err instanceof Error ? err.message : String(err),
+        }));
+        break; // Return whatever we have so far
+      }
+    } while (all.length < maxResults);
+
+    return all.slice(0, maxResults);
   }
 
   /**
