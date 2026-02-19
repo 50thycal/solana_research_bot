@@ -27,7 +27,7 @@ function envFloat(key: string, defaultValue: number): number {
   return parsed;
 }
 
-const mode = envStr('MODE', 'collect') as 'collect' | 'label';
+const mode = envStr('MODE', 'collect') as 'collect' | 'label' | 'validate';
 
 export const config = {
   mode,

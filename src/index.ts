@@ -3,6 +3,7 @@ import { openDatabase, closeDatabase } from './db/init';
 import { markStaleRunsAsFailed } from './db/queries/runs';
 import { runCollect } from './collector/collect';
 import { runLabel } from './labeler/label';
+import { runValidate } from './validate';
 
 async function main(): Promise<void> {
   console.log(JSON.stringify({
@@ -42,6 +43,9 @@ async function main(): Promise<void> {
     } else if (config.mode === 'label') {
       console.log(JSON.stringify({ event: 'label_start' }));
       await runLabel(db);
+    } else if (config.mode === 'validate') {
+      console.log(JSON.stringify({ event: 'validate_start' }));
+      await runValidate(db);
     } else {
       throw new Error(`Unknown mode: ${config.mode}`);
     }
