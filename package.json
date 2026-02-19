@@ -6,7 +6,11 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "tsx src/index.ts"
+    "dev": "tsx src/index.ts",
+    "dev:collect": "MODE=collect tsx src/index.ts",
+    "dev:label": "MODE=label tsx src/index.ts",
+    "dev:validate": "MODE=validate tsx src/index.ts",
+    "validate": "MODE=validate node dist/index.js"
   },
   "keywords": [],
   "author": "",
