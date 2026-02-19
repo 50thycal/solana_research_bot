@@ -1,5 +1,6 @@
 import { PumpfunCreateEvent } from '../pumpfun/parse-create';
 import { ClassifiedTx } from '../pumpfun/classify-tx';
+import { config } from '../config';
 
 /**
  * Tracks per-token in-memory state across snapshots.
@@ -80,7 +81,7 @@ export function getTokenPhase(
 ): 'early' | 'observe' | 'outcome' {
   const ageSeconds = (nowMs / 1000) - createdAtSeconds;
 
-  if (ageSeconds <= 120) {
+  if (ageSeconds <= config.entryMaxSeconds) {
     return 'early';
   }
 
