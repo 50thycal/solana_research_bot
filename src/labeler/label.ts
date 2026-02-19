@@ -59,6 +59,11 @@ export async function runLabel(db: Database.Database): Promise<void> {
           `Run ${config.labelRunId} is mode '${run.mode}', expected 'collect'`
         );
       }
+      if (run.status !== 'complete') {
+        throw new Error(
+          `Run ${config.labelRunId} has status '${run.status}', expected 'complete'. Only completed collect runs can be labeled.`
+        );
+      }
       collectRunIds = [config.labelRunId];
     }
 
@@ -83,21 +88,22 @@ export async function runLabel(db: Database.Database): Promise<void> {
 
     let totalTokensProcessed = 0;
     let totalEntriesTriggered = 0;
+    let totalHit2x = 0;
 
     for (const collectRunId of collectRunIds) {
-      // Clear any prior outcomes for this collect run to allow re-labeling
-      const deleted = deleteOutcomesForCollectRun(db, collectRunId);
-      if (deleted > 0) {
-        console.log(JSON.stringify({
-          event: 'label_cleared_previous',
-          labelRunId,
-          collectRunId,
-          rowsDeleted: deleted,
-        }));
-      }
-
       const mints = getMintsWithSnapshots(db, collectRunId);
       let runEntriesTriggered = 0;
+      let runHit2x = 0;
+
+      // --- Compute phase (reads + pure logic, no writes) ---
+      // Build the full list of outcomes before touching the DB so that the
+      // subsequent delete + insert can be wrapped in a single transaction.
+      interface ComputedOutcome {
+        insert: Parameters<typeof insertOutcome>[1];
+        triggered: boolean;
+        hit2x: boolean;
+      }
+      const computedOutcomes: ComputedOutcome[] = [];
 
       for (const mint of mints) {
         const snapshots = getSnapshotsForToken(db, mint, collectRunId);
@@ -119,65 +125,96 @@ export async function runLabel(db: Database.Database): Promise<void> {
             config.outcomeWindowSeconds
           );
 
-          insertOutcome(db, {
-            mint,
-            labelRunId,
-            collectRunId,
-            entryTriggered: 1,
-            entryPriceSol: metrics.entryPriceSol,
-            entrySeconds: metrics.entrySeconds,
-            entrySnapshotId: metrics.entrySnapshotId,
-            maxPriceSol: metrics.maxPriceSol,
-            maxPriceSeconds: metrics.maxPriceSeconds,
-            minPriceAfterEntry: metrics.minPriceAfterEntry,
-            finalPriceSol: metrics.finalPriceSol,
-            maxGainPct: metrics.maxGainPct,
-            maxDrawdownPct: metrics.maxDrawdownPct,
-            finalGainPct: metrics.finalGainPct,
-            hit2x: metrics.hit2x ? 1 : 0,
-            timeTo2xSeconds: metrics.timeTo2xSeconds,
-            timeToPeakSeconds: metrics.timeToPeakSeconds,
-            entryConfigJson,
+          computedOutcomes.push({
+            triggered: true,
+            hit2x: metrics.hit2x,
+            insert: {
+              mint,
+              labelRunId,
+              collectRunId,
+              entryTriggered: 1,
+              entryPriceSol: metrics.entryPriceSol,
+              entrySeconds: metrics.entrySeconds,
+              entrySnapshotId: metrics.entrySnapshotId,
+              maxPriceSol: metrics.maxPriceSol,
+              maxPriceSeconds: metrics.maxPriceSeconds,
+              minPriceAfterEntry: metrics.minPriceAfterEntry,
+              finalPriceSol: metrics.finalPriceSol,
+              maxGainPct: metrics.maxGainPct,
+              maxDrawdownPct: metrics.maxDrawdownPct,
+              finalGainPct: metrics.finalGainPct,
+              hit2x: metrics.hit2x ? 1 : 0,
+              timeTo2xSeconds: metrics.timeTo2xSeconds,
+              timeToPeakSeconds: metrics.timeToPeakSeconds,
+              entryConfigJson,
+            },
           });
-
-          runEntriesTriggered++;
         } else {
           // No entry triggered — record the absence of entry (still useful data)
-          insertOutcome(db, {
-            mint,
-            labelRunId,
-            collectRunId,
-            entryTriggered: 0,
-            entryPriceSol: null,
-            entrySeconds: null,
-            entrySnapshotId: null,
-            maxPriceSol: null,
-            maxPriceSeconds: null,
-            minPriceAfterEntry: null,
-            finalPriceSol: null,
-            maxGainPct: null,
-            maxDrawdownPct: null,
-            finalGainPct: null,
-            hit2x: null,
-            timeTo2xSeconds: null,
-            timeToPeakSeconds: null,
-            entryConfigJson,
+          computedOutcomes.push({
+            triggered: false,
+            hit2x: false,
+            insert: {
+              mint,
+              labelRunId,
+              collectRunId,
+              entryTriggered: 0,
+              entryPriceSol: null,
+              entrySeconds: null,
+              entrySnapshotId: null,
+              maxPriceSol: null,
+              maxPriceSeconds: null,
+              minPriceAfterEntry: null,
+              finalPriceSol: null,
+              maxGainPct: null,
+              maxDrawdownPct: null,
+              finalGainPct: null,
+              hit2x: null,
+              timeTo2xSeconds: null,
+              timeToPeakSeconds: null,
+              entryConfigJson,
+            },
           });
         }
 
         totalTokensProcessed++;
       }
 
+      // --- Write phase (atomic: clear previous + insert new in one transaction) ---
+      let deleted = 0;
+      db.transaction(() => {
+        deleted = deleteOutcomesForCollectRun(db, collectRunId);
+        for (const o of computedOutcomes) {
+          insertOutcome(db, o.insert);
+        }
+      })();
+
+      if (deleted > 0) {
+        console.log(JSON.stringify({
+          event: 'label_cleared_previous',
+          labelRunId,
+          collectRunId,
+          rowsDeleted: deleted,
+        }));
+      }
+
+      for (const o of computedOutcomes) {
+        if (o.triggered) runEntriesTriggered++;
+        if (o.hit2x) runHit2x++;
+      }
+
       totalEntriesTriggered += runEntriesTriggered;
+      totalHit2x += runHit2x;
 
       console.log(JSON.stringify({
         event: 'label_collect_run_done',
         labelRunId,
         collectRunId,
-        mintsProcessed: mints.length,
+        mintsProcessed: computedOutcomes.length,
         entriesTriggered: runEntriesTriggered,
-        entryRate: mints.length > 0
-          ? (runEntriesTriggered / mints.length * 100).toFixed(1) + '%'
+        hit2x: runHit2x,
+        entryRate: computedOutcomes.length > 0
+          ? (runEntriesTriggered / computedOutcomes.length * 100).toFixed(1) + '%'
           : '0%',
       }));
     }
@@ -190,6 +227,7 @@ export async function runLabel(db: Database.Database): Promise<void> {
       collectRunsProcessed: collectRunIds.length,
       totalTokensProcessed,
       totalEntriesTriggered,
+      totalHit2x,
       entryRate: totalTokensProcessed > 0
         ? (totalEntriesTriggered / totalTokensProcessed * 100).toFixed(1) + '%'
         : '0%',
