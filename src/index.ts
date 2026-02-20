@@ -20,7 +20,20 @@ async function main(): Promise<void> {
   // Initialize database and run migrations
   const db = openDatabase(config.dbPath);
 
-  // Crash recovery: mark any stale 'running' rows as 'failed'
+  // Ensure WAL is checkpointed even when the process is killed via process.exit().
+  // The try/finally block below handles normal termination; this covers SIGTERM paths
+  // where collect mode calls process.exit() after its 5-second grace period.
+  // better-sqlite3's db.open property guards against double-close.
+  process.on('exit', () => {
+    if (db.open) {
+      try { closeDatabase(db); } catch { /* ignore — best-effort checkpoint */ }
+    }
+  });
+
+  // Crash recovery: mark any stale 'running' rows as 'failed'.
+  // NOTE: Do not manually trigger collect and label/validate services concurrently
+  // against the same database — this recovery step will mark the collect run as
+  // 'failed' even if it is still genuinely in progress.
   try {
     const staleCount = markStaleRunsAsFailed(db);
     if (staleCount > 0) {

@@ -108,9 +108,13 @@ export async function runCollect(db: Database.Database): Promise<void> {
     // Main loop
     await mainLoop(state);
 
-    // Finalize
+    // Finalize — only mark complete if we weren't interrupted by SIGTERM.
+    // If stopped is true, partialRun() has already written 'partial' to the DB;
+    // calling completeRun() here would overwrite that status.
     state.wsListener.stop();
-    completeRun(db, runId, state.tokens.size, 0);
+    if (!state.stopped) {
+      completeRun(db, runId, state.tokens.size, 0);
+    }
 
     console.log(JSON.stringify({
       event: 'collect_complete',
