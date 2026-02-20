@@ -8,7 +8,7 @@ A batch data collection system for pump.fun token launches on Solana. It has thr
 - **label** — Reads collected data from SQLite, evaluates entry conditions, computes outcome metrics (gain %, drawdown, 2x hit, etc.), writes results back to the DB.
 - **validate** — Health check that queries the DB and prints data quality stats.
 
-It is NOT a web server. It runs as cron jobs on Railway.
+It is NOT a web server. It runs as a cron job on Railway.
 
 ---
 
@@ -51,91 +51,130 @@ git push -u origin main
 
 ## Step 4: Create the Railway Project
 
-**Option A: Use the setup script** (walks you through it):
-
-```bash
-chmod +x scripts/setup-railway.sh
-HELIUS_API_KEY=your_key_here ./scripts/setup-railway.sh
-```
-
-**Option B: Manual dashboard setup** (continue with steps 5–8 below).
-
----
-
-## Step 5: Create Project & Volume in Railway Dashboard
-
 1. Go to [railway.app](https://railway.app) → **New Project**
 2. Name it `pumpfun-research-collector`
-3. Click **+ New** → **Volume**
-   - Mount path: `/data`
-   - This is where the SQLite database lives (`/data/research.db`)
-   - **This volume is critical** — it persists data between cron runs
 
 ---
 
-## Step 6: Create the Collect Service
+## Step 5: Create a Service and Attach a Volume
+
+> **Important:** Railway does NOT support sharing a volume between two services.
+> Since both collect and label modes need to read/write the same SQLite database,
+> we use a **single service**. You switch between modes by changing the `MODE`
+> environment variable and manually triggering the service, or use the cron
+> schedule for automated collect runs.
+
+### Create the service
 
 1. In your project, click **+ New** → **Service** → connect your GitHub repo
-2. Name the service: `collect`
-3. Railway will auto-detect the Dockerfile
-4. Go to **Settings** → **Cron Schedule**: `0 */4 * * *` (every 4 hours)
-5. **Attach the `/data` volume** to this service
-6. Go to **Variables** and add:
+2. Name the service: `collector`
+3. Railway will auto-detect the Dockerfile — no build config needed
 
-| Variable | Value |
-|---|---|
-| `MODE` | `collect` |
-| `HELIUS_API_KEY` | `your_actual_key` |
-| `HELIUS_RPC_URL` | `https://mainnet.helius-rpc.com/?api-key=YOUR_KEY` |
-| `HELIUS_WS_URL` | `wss://mainnet.helius-rpc.com/?api-key=YOUR_KEY` |
-| `DB_PATH` | `/data/research.db` |
-| `OBSERVATION_WINDOW_MINUTES` | `30` |
-| `EARLY_SNAPSHOT_INTERVAL_MS` | `5000` |
-| `SNAPSHOT_INTERVAL_MS` | `10000` |
-| `OUTCOME_SNAPSHOT_INTERVAL_MS` | `30000` |
-| `MAX_TRACK_MINUTES` | `50` |
-| `MAX_TOKENS_PER_RUN` | `150` |
-| `MAX_TX_SAMPLE_PER_TOKEN` | `10` |
-| `MAX_TX_SAMPLE_PER_ROUND` | `200` |
+### Add the volume
 
-> Replace `YOUR_KEY` in the RPC/WS URLs with your actual Helius API key.
+Volumes are added **per-service**, not at the project level:
+
+1. Click on your `collector` service to open it
+2. Go to the **Settings** tab (or use `Cmd+K` / `Ctrl+K` → search "volume")
+3. Scroll to the **Volume** section and click **Add Volume** (or **+ Mount**)
+4. Set the mount path to: `/data`
+5. Click **Save** / **Add**
+
+This creates a persistent directory at `/data` inside the container. The SQLite database will live at `/data/research.db`. Data persists across deployments and cron runs.
+
+### Set the cron schedule (for automated collect runs)
+
+1. Still in **Settings**, find **Cron Schedule**
+2. Set it to: `0 */4 * * *` (every 4 hours)
+
+This will automatically run a collect job every 4 hours.
 
 ---
 
-## Step 7: Create the Label Service
+## Step 6: Set Environment Variables
 
-1. Click **+ New** → **Service** → connect the **same** GitHub repo
-2. Name the service: `label`
-3. **Settings** → **Cron Schedule**: `30 3 * * *` (daily at 3:30 AM UTC)
-4. **Attach the same `/data` volume**
-5. Set environment variables:
+1. Click on your `collector` service
+2. Go to the **Variables** tab
+3. You can paste these in using Railway's **RAW Editor** (click the toggle)
 
-| Variable | Value |
-|---|---|
-| `MODE` | `label` |
-| `DB_PATH` | `/data/research.db` |
-| `LABEL_RUN_ID` | `all` |
-| `ENTRY_MIN_BUY_COUNT` | `5` |
-| `ENTRY_MIN_UNIQUE_BUYERS` | `3` |
-| `ENTRY_MIN_BUY_VELOCITY` | `0.25` |
-| `ENTRY_MAX_SELL_RATIO` | `0.20` |
-| `ENTRY_MAX_SECONDS` | `120` |
-| `OUTCOME_WINDOW_SECONDS` | `600` |
+### For collect mode (default cron operation)
 
-> The label service does **not** need Helius credentials — it only reads the SQLite DB.
+Copy this JSON into Railway's RAW Editor:
+
+```json
+{
+  "MODE": "collect",
+  "HELIUS_API_KEY": "YOUR_HELIUS_API_KEY_HERE",
+  "HELIUS_RPC_URL": "https://mainnet.helius-rpc.com/?api-key=YOUR_HELIUS_API_KEY_HERE",
+  "HELIUS_WS_URL": "wss://mainnet.helius-rpc.com/?api-key=YOUR_HELIUS_API_KEY_HERE",
+  "DB_PATH": "/data/research.db",
+  "OBSERVATION_WINDOW_MINUTES": "30",
+  "EARLY_SNAPSHOT_INTERVAL_MS": "5000",
+  "SNAPSHOT_INTERVAL_MS": "10000",
+  "OUTCOME_SNAPSHOT_INTERVAL_MS": "30000",
+  "MAX_TRACK_MINUTES": "50",
+  "MAX_TOKENS_PER_RUN": "150",
+  "MAX_TX_SAMPLE_PER_TOKEN": "10",
+  "MAX_TX_SAMPLE_PER_ROUND": "200"
+}
+```
+
+> Replace all 3 instances of `YOUR_HELIUS_API_KEY_HERE` with your actual Helius API key.
+
+### For label mode (when you want to run labeling)
+
+Temporarily change these variables and manually trigger the service:
+
+```json
+{
+  "MODE": "label",
+  "DB_PATH": "/data/research.db",
+  "LABEL_RUN_ID": "all",
+  "ENTRY_MIN_BUY_COUNT": "5",
+  "ENTRY_MIN_UNIQUE_BUYERS": "3",
+  "ENTRY_MIN_BUY_VELOCITY": "0.25",
+  "ENTRY_MAX_SELL_RATIO": "0.20",
+  "ENTRY_MAX_SECONDS": "120",
+  "OUTCOME_WINDOW_SECONDS": "600"
+}
+```
+
+### For validate mode (health check)
+
+```json
+{
+  "MODE": "validate",
+  "DB_PATH": "/data/research.db"
+}
+```
 
 ---
 
-## Step 8: Test It
+## Step 7: Test It
 
-1. In the Railway dashboard, **manually trigger** the collect service
-2. Watch the logs for JSON output:
+### First test — collect mode
+
+1. Make sure `MODE=collect` and your Helius variables are set
+2. In the Railway dashboard, **manually trigger** the service (click the 3-dot menu → **Trigger Deploy** or **Run**)
+3. Watch the logs for JSON output:
    - `{"event":"run_start","run_id":"...","mode":"collect"}`
    - `{"event":"ws_connected"}`
    - `{"event":"create_detected","mint":"..."}`
-   - Snapshot events, then `{"event":"run_complete"}`
-3. After a successful collect run, manually trigger the label service
-4. Optionally run validate mode to check data health
+   - Snapshot events over ~50 minutes
+   - `{"event":"run_complete"}`
+
+### Second test — label mode
+
+1. After a successful collect run, change `MODE` to `label` in the Variables tab
+2. Add the label-specific variables (entry thresholds, outcome window)
+3. Manually trigger the service
+4. Watch logs for labeling output
+5. **Change `MODE` back to `collect`** so the cron schedule runs the right thing
+
+### Third test — validate mode
+
+1. Change `MODE` to `validate`, manually trigger, check health output
+2. **Change `MODE` back to `collect`** when done
 
 ---
 
@@ -179,7 +218,7 @@ MODE=collect npm start
 
 ### Database
 
-SQLite with WAL mode. No external database service needed — it's a file on the Railway volume. The schema (5 tables) is auto-created on first run via built-in migrations.
+SQLite with WAL mode. No external database service to provision — it's a file on the Railway volume. The schema (5 tables) is auto-created on first run via built-in migrations.
 
 ### Cost
 
@@ -197,13 +236,13 @@ If a run crashes, the next startup automatically marks stale "running" records a
 
 `scripts/backup-db.sh` creates timestamped copies of the SQLite file and prunes backups older than 7 days. To use it, add `sqlite3` to the Dockerfile's `apt-get install` line.
 
-### Volume Sharing
-
-Both services (collect and label) **must** attach to the **same** Railway volume at `/data`. This is how label mode reads the data that collect mode wrote.
-
 ### Logs
 
 All output is JSON-formatted to stdout. View in Railway's service logs dashboard.
+
+### Why One Service Instead of Two?
+
+Railway [does not support sharing a volume between services](https://docs.railway.com/reference/volumes). Since both collect and label modes need to access the same SQLite file at `/data/research.db`, they must run on the same service. You switch modes by changing the `MODE` env var.
 
 ---
 
