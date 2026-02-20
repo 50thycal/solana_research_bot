@@ -60,9 +60,13 @@ export async function runSnapshotRound(
     const curve = curveStates.get(token.bondingCurvePda) ?? null;
     const secondsSinceCreation = (now / 1000) - token.createdAt;
 
-    // Fetch signature count — paginate up to 5000 so totalTxCount stays accurate
-    // for high-volume tokens that would otherwise freeze at the 1000-per-call RPC cap.
-    const signatures = await rpc.fetchSignatures(token.bondingCurvePda, { maxResults: 5000 });
+    // Fetch signature count. During the early phase (first 120 s), tokens cannot
+    // yet have accumulated 1 000+ transactions, so a single page is sufficient and
+    // avoids turning every 5-second snapshot tick into 5 sequential RPC calls.
+    // For observe/outcome phases, paginate up to 5 000 so totalTxCount remains
+    // accurate for high-volume tokens that would otherwise freeze at the RPC cap.
+    const sigMaxResults = phase === 'early' ? 1000 : 5000;
+    const signatures = await rpc.fetchSignatures(token.bondingCurvePda, { maxResults: sigMaxResults });
 
     // If we received 0 signatures but the token previously had transactions, treat
     // this as a transient RPC failure and keep the last known count.  A genuine

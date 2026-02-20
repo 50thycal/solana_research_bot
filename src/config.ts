@@ -73,7 +73,16 @@ export function validateCollectConfig(): void {
   }
 }
 
-/** JSON snapshot of config for storing in runs table */
+/** JSON snapshot of config for storing in runs table.
+ *  Helius credentials are redacted — the API key must not be persisted
+ *  in the database where it could be extracted via DB exports or backups.
+ */
 export function configSnapshot(): string {
-  return JSON.stringify(config);
+  const { heliusApiKey: _k, heliusRpcUrl: _r, heliusWsUrl: _w, ...rest } = config;
+  return JSON.stringify({
+    ...rest,
+    heliusApiKey: '[REDACTED]',
+    heliusRpcUrl: '[REDACTED]',
+    heliusWsUrl: '[REDACTED]',
+  });
 }

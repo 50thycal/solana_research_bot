@@ -63,6 +63,8 @@ export function calculateOutcomeMetrics(
   }
 
   let maxPriceSol = -Infinity;
+  // maxPriceSeconds holds seconds_since_creation (absolute from token creation),
+  // NOT seconds relative to entry. Use timeToPeakSeconds for the relative measure.
   let maxPriceSeconds = 0;
   let minPriceAfterEntry = Infinity;
   let timeTo2xSeconds: number | null = null;

@@ -181,13 +181,21 @@ export async function runValidate(db: Database.Database): Promise<void> {
     SELECT
       COUNT(DISTINCT run_id) as runs,
       COUNT(*) as snapshot_rounds,
-      SUM(COALESCE(sample_size, 0)) as total_tx_fetched
+      SUM(COALESCE(sample_size, 0)) as total_tx_fetched,
+      -- Estimate paginated getSignaturesForAddress calls: ceil(total_tx / 1000) per round.
+      -- Integer ceiling division: (n + 999) / 1000 using SQLite integer arithmetic.
+      SUM((COALESCE(sample_total, 0) + 999) / 1000) as estimated_sig_pages
     FROM snapshots
-  `).get() as { runs: number; snapshot_rounds: number; total_tx_fetched: number };
+  `).get() as { runs: number; snapshot_rounds: number; total_tx_fetched: number; estimated_sig_pages: number };
 
-  // Each snapshot round: 1 getMultipleAccounts + N getSignatures + M getTransaction
-  // Approximate: snapshot_rounds * 2 (accounts + sigs batch) + total_tx_fetched
-  const estimatedCalls = (rpcEstimate.snapshot_rounds * 2) + rpcEstimate.total_tx_fetched;
+  // Each snapshot round costs:
+  //   1 getMultipleAccounts call (bonding curve batch)
+  //   ceil(total_tx_count / 1000) getSignaturesForAddress calls (paginated)
+  //   sample_size getTransaction calls (one per sampled tx)
+  const estimatedCalls =
+    rpcEstimate.snapshot_rounds +
+    rpcEstimate.estimated_sig_pages +
+    rpcEstimate.total_tx_fetched;
   const callsPerRun = rpcEstimate.runs > 0
     ? Math.round(estimatedCalls / rpcEstimate.runs)
     : 0;
@@ -195,6 +203,7 @@ export async function runValidate(db: Database.Database): Promise<void> {
   console.log(JSON.stringify({
     event: 'validate_rpc_estimate',
     totalSnapshotRounds: rpcEstimate.snapshot_rounds,
+    estimatedSigPages: rpcEstimate.estimated_sig_pages,
     totalTxFetched: rpcEstimate.total_tx_fetched,
     estimatedTotalRpcCalls: estimatedCalls,
     estimatedCallsPerRun: callsPerRun,
