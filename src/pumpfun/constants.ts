@@ -7,7 +7,7 @@ export const PUMP_FUN_PROGRAM_ID = new PublicKey(
 
 /** Pump.fun global account (fee recipient) */
 export const PUMP_FUN_FEE_RECIPIENT = new PublicKey(
-  'CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbCJ150MiQbpN'
+  'CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM'
 );
 
 /** System program */
