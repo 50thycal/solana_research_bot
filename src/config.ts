@@ -18,12 +18,8 @@ function envInt(key: string, defaultValue: number): number {
   return parsed;
 }
 
-const mode = envStr('MODE', 'collect') as 'collect' | 'dashboard';
-
 export const config = {
-  mode,
-
-  // Helius (required for collect mode)
+  // Helius
   heliusApiKey: envStr('HELIUS_API_KEY', ''),
   heliusRpcUrl: envStr('HELIUS_RPC_URL', ''),
   heliusWsUrl: envStr('HELIUS_WS_URL', ''),

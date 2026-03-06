@@ -2,18 +2,15 @@ import { config, validateCollectConfig } from './config';
 import { openDatabase, closeDatabase } from './db/init';
 import { markStaleRunsAsFailed } from './db/queries/runs';
 import { runCollect } from './collector/collect';
-import { runDashboard } from './dashboard/server';
+import { startDashboard } from './dashboard/server';
 
 async function main(): Promise<void> {
   console.log(JSON.stringify({
     event: 'startup',
-    mode: config.mode,
     timestamp: new Date().toISOString(),
   }));
 
-  if (config.mode === 'collect') {
-    validateCollectConfig();
-  }
+  validateCollectConfig();
 
   const db = openDatabase(config.dbPath);
 
@@ -38,17 +35,14 @@ async function main(): Promise<void> {
     }));
   }
 
+  // Start dashboard server in background — always available
+  const server = await startDashboard(db);
+
   try {
-    if (config.mode === 'collect') {
-      console.log(JSON.stringify({ event: 'collect_start' }));
-      await runCollect(db);
-    } else if (config.mode === 'dashboard') {
-      console.log(JSON.stringify({ event: 'dashboard_start' }));
-      await runDashboard(db);
-    } else {
-      throw new Error(`Unknown mode: ${config.mode}`);
-    }
+    // Run collector (blocks until SIGTERM)
+    await runCollect(db);
   } finally {
+    server.close();
     closeDatabase(db);
   }
 }

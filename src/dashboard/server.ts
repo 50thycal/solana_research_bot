@@ -4,11 +4,14 @@ import { config } from '../config';
 import { handleApiRequest } from './api';
 import { getDashboardHtml } from './ui';
 
-export async function runDashboard(db: Database.Database): Promise<void> {
+/**
+ * Start the dashboard HTTP server in the background.
+ * Returns immediately after the server is listening.
+ */
+export function startDashboard(db: Database.Database): Promise<http.Server> {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
 
-    // CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -19,13 +22,11 @@ export async function runDashboard(db: Database.Database): Promise<void> {
       return;
     }
 
-    // API routes
     if (url.pathname.startsWith('/api/')) {
       handleApiRequest(db, url, res);
       return;
     }
 
-    // Dashboard UI
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(getDashboardHtml());
   });
@@ -35,15 +36,9 @@ export async function runDashboard(db: Database.Database): Promise<void> {
       console.log(JSON.stringify({
         event: 'dashboard_started',
         port: config.dashboardPort,
-        host: '0.0.0.0',
       }));
+      resolve(server);
     });
-
-    process.on('SIGTERM', () => {
-      console.log(JSON.stringify({ event: 'dashboard_stopping' }));
-      server.close(() => resolve());
-    });
-
     server.on('error', reject);
   });
 }
