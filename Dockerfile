@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci --production=false
+RUN npm ci
 
 COPY tsconfig.json ./
 COPY src/ src/
@@ -14,7 +14,7 @@ COPY src/ src/
 RUN npm run build
 
 # Remove dev dependencies after build
-RUN npm prune --production
+RUN npm prune --omit=dev
 
 EXPOSE 3000
 

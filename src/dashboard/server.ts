@@ -22,6 +22,12 @@ export function startDashboard(db: Database.Database): Promise<http.Server> {
       return;
     }
 
+    if (url.pathname === '/healthz') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ok' }));
+      return;
+    }
+
     if (url.pathname.startsWith('/api/')) {
       handleApiRequest(db, url, res);
       return;
