@@ -40,17 +40,9 @@ export const config = {
   dashboardPort: envInt('PORT', 3000),
 } as const;
 
-/** Validate that required Helius credentials are set for collect mode */
-export function validateCollectConfig(): void {
-  const missing: string[] = [];
-  if (!config.heliusApiKey) missing.push('HELIUS_API_KEY');
-  if (!config.heliusRpcUrl) missing.push('HELIUS_RPC_URL');
-  if (!config.heliusWsUrl) missing.push('HELIUS_WS_URL');
-  if (missing.length > 0) {
-    throw new Error(
-      `Collect mode requires the following environment variables: ${missing.join(', ')}`
-    );
-  }
+/** Check whether Helius credentials are configured for collection */
+export function hasCollectConfig(): boolean {
+  return !!(config.heliusApiKey && config.heliusRpcUrl && config.heliusWsUrl);
 }
 
 /** JSON snapshot of config for storing in runs table.

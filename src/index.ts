@@ -1,4 +1,4 @@
-import { config, validateCollectConfig } from './config';
+import { config, hasCollectConfig } from './config';
 import { openDatabase, closeDatabase } from './db/init';
 import { markStaleRunsAsFailed } from './db/queries/runs';
 import { runCollect } from './collector/collect';
@@ -9,8 +9,6 @@ async function main(): Promise<void> {
     event: 'startup',
     timestamp: new Date().toISOString(),
   }));
-
-  validateCollectConfig();
 
   const db = openDatabase(config.dbPath);
 
@@ -35,16 +33,36 @@ async function main(): Promise<void> {
     }));
   }
 
-  // Start dashboard server in background — always available
+  // Dashboard always starts — it's the main UI
   const server = await startDashboard(db);
 
-  try {
-    // Run collector (blocks until SIGTERM)
-    await runCollect(db);
-  } finally {
-    server.close();
-    closeDatabase(db);
+  // Collector starts only if Helius credentials are configured
+  if (hasCollectConfig()) {
+    console.log(JSON.stringify({ event: 'collector_starting' }));
+    try {
+      await runCollect(db);
+    } catch (err) {
+      console.error(JSON.stringify({
+        event: 'collector_error',
+        error: err instanceof Error ? err.message : String(err),
+      }));
+    }
+  } else {
+    console.log(JSON.stringify({
+      event: 'collector_skipped',
+      reason: 'Helius credentials not configured. Dashboard-only mode.',
+    }));
+    // Keep the process alive for the dashboard
+    await new Promise<void>((resolve) => {
+      process.on('SIGTERM', () => {
+        server.close();
+        resolve();
+      });
+    });
   }
+
+  server.close();
+  closeDatabase(db);
 }
 
 process.on('SIGTERM', () => {
