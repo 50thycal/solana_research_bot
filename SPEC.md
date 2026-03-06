@@ -1,4 +1,4 @@
-# Pump.fun Research Collector — V1 Spec
+# Pump.fun Research Collector — V1 Specs
 > **Status:** Approved for implementation
 > **Date:** 2026-02-18
 > **Repo:** New standalone repo (separate from trading bot)
