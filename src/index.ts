@@ -1,19 +1,14 @@
-import { config, validateCollectConfig } from './config';
+import { config, hasCollectConfig } from './config';
 import { openDatabase, closeDatabase } from './db/init';
 import { markStaleRunsAsFailed } from './db/queries/runs';
 import { runCollect } from './collector/collect';
-import { runDashboard } from './dashboard/server';
+import { startDashboard } from './dashboard/server';
 
 async function main(): Promise<void> {
   console.log(JSON.stringify({
     event: 'startup',
-    mode: config.mode,
     timestamp: new Date().toISOString(),
   }));
-
-  if (config.mode === 'collect') {
-    validateCollectConfig();
-  }
 
   const db = openDatabase(config.dbPath);
 
@@ -38,19 +33,36 @@ async function main(): Promise<void> {
     }));
   }
 
-  try {
-    if (config.mode === 'collect') {
-      console.log(JSON.stringify({ event: 'collect_start' }));
+  // Dashboard always starts — it's the main UI
+  const server = await startDashboard(db);
+
+  // Collector starts only if Helius credentials are configured
+  if (hasCollectConfig()) {
+    console.log(JSON.stringify({ event: 'collector_starting' }));
+    try {
       await runCollect(db);
-    } else if (config.mode === 'dashboard') {
-      console.log(JSON.stringify({ event: 'dashboard_start' }));
-      await runDashboard(db);
-    } else {
-      throw new Error(`Unknown mode: ${config.mode}`);
+    } catch (err) {
+      console.error(JSON.stringify({
+        event: 'collector_error',
+        error: err instanceof Error ? err.message : String(err),
+      }));
     }
-  } finally {
-    closeDatabase(db);
+  } else {
+    console.log(JSON.stringify({
+      event: 'collector_skipped',
+      reason: 'Helius credentials not configured. Dashboard-only mode.',
+    }));
+    // Keep the process alive for the dashboard
+    await new Promise<void>((resolve) => {
+      process.on('SIGTERM', () => {
+        server.close();
+        resolve();
+      });
+    });
   }
+
+  server.close();
+  closeDatabase(db);
 }
 
 process.on('SIGTERM', () => {
