@@ -45,6 +45,20 @@ function getTokens(db: Database.Database, url: URL, res: http.ServerResponse): v
   const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get('limit') ?? '20', 10) || 20));
   const offset = (page - 1) * limit;
 
+  // Sorting — whitelist allowed columns
+  const allowedSorts: Record<string, string> = {
+    'last_price': 'last_price',
+    'change': 'change_pct',
+    'market_cap': 'last_market_cap',
+    'created': 't.created_at',
+    'analysis_ended': 'analysis_ended_at',
+    'snapshots': 'snapshot_count',
+  };
+  const sortParam = url.searchParams.get('sort') ?? 'analysis_ended';
+  const orderParam = url.searchParams.get('order') ?? 'desc';
+  const sortCol = allowedSorts[sortParam] ?? 'analysis_ended_at';
+  const sortDir = orderParam.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+
   const countRow = db.prepare(`
     SELECT COUNT(DISTINCT t.mint) as total
     FROM tokens t
@@ -70,11 +84,18 @@ function getTokens(db: Database.Database, url: URL, res: http.ServerResponse): v
       (SELECT MAX(s.total_tx_count) FROM snapshots s WHERE s.mint = t.mint AND s.run_id = r.run_id) as max_tx_count,
       (SELECT s.market_cap_sol FROM snapshots s WHERE s.mint = t.mint AND s.run_id = r.run_id ORDER BY s.seconds_since_creation DESC LIMIT 1) as last_market_cap,
       r.completed_at as analysis_ended_at,
-      (SELECT s.snapshot_at FROM snapshots s WHERE s.mint = t.mint AND s.run_id = r.run_id ORDER BY s.seconds_since_creation DESC LIMIT 1) as last_snapshot_at
+      (SELECT s.snapshot_at FROM snapshots s WHERE s.mint = t.mint AND s.run_id = r.run_id ORDER BY s.seconds_since_creation DESC LIMIT 1) as last_snapshot_at,
+      CASE
+        WHEN (SELECT s.price_sol FROM snapshots s WHERE s.mint = t.mint AND s.run_id = r.run_id ORDER BY s.seconds_since_creation ASC LIMIT 1) > 0
+        THEN ((SELECT s.price_sol FROM snapshots s WHERE s.mint = t.mint AND s.run_id = r.run_id ORDER BY s.seconds_since_creation DESC LIMIT 1)
+             - (SELECT s.price_sol FROM snapshots s WHERE s.mint = t.mint AND s.run_id = r.run_id ORDER BY s.seconds_since_creation ASC LIMIT 1))
+             / (SELECT s.price_sol FROM snapshots s WHERE s.mint = t.mint AND s.run_id = r.run_id ORDER BY s.seconds_since_creation ASC LIMIT 1) * 100
+        ELSE 0
+      END as change_pct
     FROM tokens t
     INNER JOIN token_runs tr ON tr.mint = t.mint
     INNER JOIN runs r ON r.run_id = tr.run_id AND r.status = 'complete'
-    ORDER BY r.started_at DESC
+    ORDER BY ${sortCol} ${sortDir}
     LIMIT ? OFFSET ?
   `).all(limit, offset) as any[];
 
@@ -136,7 +157,10 @@ function getStats(db: Database.Database, res: http.ServerResponse): void {
       (SELECT COUNT(*) FROM tokens) as total_tokens,
       (SELECT COUNT(*) FROM runs WHERE status = 'complete') as completed_runs,
       (SELECT COUNT(*) FROM runs WHERE status = 'running') as active_runs,
-      (SELECT COUNT(*) FROM snapshots) as total_snapshots
+      (SELECT COUNT(*) FROM runs WHERE status = 'failed') as failed_runs,
+      (SELECT COUNT(*) FROM snapshots) as total_snapshots,
+      (SELECT AVG(cnt) FROM (SELECT COUNT(*) as cnt FROM snapshots GROUP BY mint, run_id)) as avg_snapshots_per_token,
+      (SELECT COUNT(DISTINCT creator) FROM tokens) as unique_creators
   `).get();
 
   const recentRun = db.prepare(`
@@ -146,5 +170,15 @@ function getStats(db: Database.Database, res: http.ServerResponse): void {
     LIMIT 1
   `).get();
 
-  jsonResponse(res, { stats, recentRun });
+  // Get active run details if any
+  const activeRun = db.prepare(`
+    SELECT r.*,
+      (SELECT COUNT(DISTINCT tr.mint) FROM token_runs tr WHERE tr.run_id = r.run_id) as tokens_tracking
+    FROM runs r
+    WHERE r.status = 'running'
+    ORDER BY r.started_at DESC
+    LIMIT 1
+  `).get();
+
+  jsonResponse(res, { stats, recentRun, activeRun });
 }

@@ -32,9 +32,71 @@ export function getDashboardHtml(): string {
       gap: 24px;
       font-size: 13px;
       color: #8888aa;
+      align-items: center;
     }
     .stats-bar .stat-val { color: #00d4ff; font-weight: 600; }
     .container { max-width: 1400px; margin: 0 auto; padding: 20px 30px; }
+
+    /* Status banner */
+    .status-banner {
+      padding: 12px 30px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 13px;
+      border-bottom: 1px solid #1e1e3a;
+    }
+    .status-banner.active { background: linear-gradient(90deg, rgba(0, 230, 118, 0.08) 0%, rgba(0, 230, 118, 0) 100%); }
+    .status-banner.idle { background: linear-gradient(90deg, rgba(136, 136, 170, 0.05) 0%, rgba(136, 136, 170, 0) 100%); }
+    .status-dot {
+      width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+    }
+    .status-dot.active { background: #00e676; box-shadow: 0 0 8px rgba(0, 230, 118, 0.6); animation: pulse 2s infinite; }
+    .status-dot.idle { background: #555577; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .status-text { color: #ccc; }
+    .status-detail { color: #6666aa; margin-left: auto; }
+
+    /* Stats overview panel */
+    .stats-panel {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .stat-card {
+      background: #12121f;
+      border: 1px solid #1e1e3a;
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .stat-card .stat-label { font-size: 11px; color: #6666aa; text-transform: uppercase; margin-bottom: 4px; }
+    .stat-card .stat-value { font-size: 22px; font-weight: 700; color: #fff; }
+    .stat-card .stat-sub { font-size: 11px; color: #555577; margin-top: 2px; }
+
+    /* Sort controls */
+    .sort-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+      font-size: 13px;
+      color: #6666aa;
+    }
+    .sort-bar span { margin-right: 4px; }
+    .sort-btn {
+      background: #1e1e3a;
+      color: #8888aa;
+      border: 1px solid #2a2a4a;
+      padding: 5px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: all 0.2s;
+    }
+    .sort-btn:hover { border-color: #00d4ff; color: #ccc; }
+    .sort-btn.active { background: #00d4ff22; border-color: #00d4ff; color: #00d4ff; }
+    .sort-btn .arrow { font-size: 10px; margin-left: 3px; }
 
     /* Token list */
     .token-list { margin-top: 10px; }
@@ -146,9 +208,19 @@ export function getDashboardHtml(): string {
     <div class="stats-bar" id="statsBar">Loading...</div>
   </div>
 
+  <div class="status-banner idle" id="statusBanner">
+    <div class="status-dot idle" id="statusDot"></div>
+    <span class="status-text" id="statusText">Checking bot status...</span>
+    <span class="status-detail" id="statusDetail"></span>
+  </div>
+
   <div class="container">
+    <!-- Stats Overview -->
+    <div class="stats-panel" id="statsPanel"></div>
+
     <!-- List View -->
     <div class="list-view" id="listView">
+      <div class="sort-bar" id="sortBar"></div>
       <div class="token-list" id="tokenList">
         <div class="loading">Loading tokens...</div>
       </div>
@@ -166,6 +238,8 @@ export function getDashboardHtml(): string {
     let currentPage = 1;
     const pageSize = 20;
     let charts = [];
+    let currentSort = 'analysis_ended';
+    let currentOrder = 'desc';
 
     async function fetchJson(url) {
       const res = await fetch(url);
@@ -236,23 +310,87 @@ export function getDashboardHtml(): string {
       try {
         const data = await fetchJson('/api/stats');
         const s = data.stats;
+        const ar = data.activeRun;
+        const rr = data.recentRun;
+
+        // Header stats bar (compact)
         document.getElementById('statsBar').innerHTML =
           '<span>Tokens: <span class="stat-val">' + s.total_tokens + '</span></span>' +
           '<span>Runs: <span class="stat-val">' + s.completed_runs + '</span></span>' +
-          '<span>Snapshots: <span class="stat-val">' + s.total_snapshots.toLocaleString() + '</span></span>' +
-          (s.active_runs > 0 ? '<span>Active: <span class="stat-val" style="color:#00e676">' + s.active_runs + '</span></span>' : '');
+          '<span>Snapshots: <span class="stat-val">' + s.total_snapshots.toLocaleString() + '</span></span>';
+
+        // Status banner
+        var banner = document.getElementById('statusBanner');
+        var dot = document.getElementById('statusDot');
+        var statusText = document.getElementById('statusText');
+        var statusDetail = document.getElementById('statusDetail');
+
+        if (ar) {
+          banner.className = 'status-banner active';
+          dot.className = 'status-dot active';
+          var elapsed = Math.round((Date.now() - ar.started_at) / 60000);
+          statusText.textContent = 'Bot is actively collecting data';
+          statusDetail.textContent = 'Tracking ' + (ar.tokens_tracking || 0) + ' tokens | Running for ' + elapsed + ' min | ' + (ar.entries_triggered || 0) + ' entries triggered';
+        } else {
+          banner.className = 'status-banner idle';
+          dot.className = 'status-dot idle';
+          statusText.textContent = 'Bot is idle — no active collection run';
+          if (rr) {
+            statusDetail.textContent = 'Last run completed ' + timeAgo(rr.completed_at) + ' | ' + (rr.tokens_observed || 0) + ' tokens observed';
+          } else {
+            statusDetail.textContent = '';
+          }
+        }
+
+        // Stats panel cards
+        var avgSnaps = s.avg_snapshots_per_token ? Math.round(s.avg_snapshots_per_token) : 0;
+        document.getElementById('statsPanel').innerHTML =
+          '<div class="stat-card"><div class="stat-label">Total Tokens</div><div class="stat-value">' + s.total_tokens + '</div><div class="stat-sub">analyzed across all runs</div></div>' +
+          '<div class="stat-card"><div class="stat-label">Completed Runs</div><div class="stat-value">' + s.completed_runs + '</div><div class="stat-sub">' + (s.failed_runs || 0) + ' failed</div></div>' +
+          '<div class="stat-card"><div class="stat-label">Total Snapshots</div><div class="stat-value">' + s.total_snapshots.toLocaleString() + '</div><div class="stat-sub">~' + avgSnaps + ' per token avg</div></div>' +
+          '<div class="stat-card"><div class="stat-label">Unique Creators</div><div class="stat-value">' + (s.unique_creators || 0) + '</div></div>' +
+          (rr ? '<div class="stat-card"><div class="stat-label">Last Run</div><div class="stat-value" style="font-size:14px">' + formatTime(rr.completed_at) + '</div><div class="stat-sub">' + (rr.tokens_observed || 0) + ' tokens observed</div></div>' : '');
       } catch (e) {
         document.getElementById('statsBar').textContent = 'Error loading stats';
       }
+    }
+
+    function renderSortBar() {
+      var sorts = [
+        { key: 'analysis_ended', label: 'Recent' },
+        { key: 'last_price', label: 'Price' },
+        { key: 'change', label: 'Change %' },
+        { key: 'market_cap', label: 'Mkt Cap' },
+        { key: 'created', label: 'Created' },
+        { key: 'snapshots', label: 'Snapshots' },
+      ];
+      var html = '<span>Sort by:</span>';
+      sorts.forEach(function(s) {
+        var isActive = currentSort === s.key;
+        var arrow = isActive ? (currentOrder === 'desc' ? '\\u25BC' : '\\u25B2') : '';
+        html += '<button class="sort-btn' + (isActive ? ' active' : '') + '" onclick="toggleSort(\\'' + s.key + '\\')">' + s.label + (arrow ? '<span class="arrow"> ' + arrow + '</span>' : '') + '</button>';
+      });
+      document.getElementById('sortBar').innerHTML = html;
+    }
+
+    function toggleSort(key) {
+      if (currentSort === key) {
+        currentOrder = currentOrder === 'desc' ? 'asc' : 'desc';
+      } else {
+        currentSort = key;
+        currentOrder = 'desc';
+      }
+      loadTokens(1);
     }
 
     async function loadTokens(page) {
       currentPage = page;
       const el = document.getElementById('tokenList');
       el.innerHTML = '<div class="loading">Loading...</div>';
+      renderSortBar();
 
       try {
-        const data = await fetchJson('/api/tokens?page=' + page + '&limit=' + pageSize);
+        const data = await fetchJson('/api/tokens?page=' + page + '&limit=' + pageSize + '&sort=' + currentSort + '&order=' + currentOrder);
         if (data.tokens.length === 0) {
           el.innerHTML = '<div class="empty-state"><h3>No tokens tracked yet</h3><p>Start the collector to begin tracking tokens.</p></div>';
           document.getElementById('pagination').innerHTML = '';
@@ -289,6 +427,7 @@ export function getDashboardHtml(): string {
 
     async function showDetail(mint, runId) {
       document.getElementById('listView').style.display = 'none';
+      document.getElementById('statsPanel').style.display = 'none';
       const dv = document.getElementById('detailView');
       dv.classList.add('active');
       document.getElementById('detailContent').innerHTML = '<div class="loading">Loading token data...</div>';
@@ -454,6 +593,7 @@ export function getDashboardHtml(): string {
     function showList() {
       document.getElementById('detailView').classList.remove('active');
       document.getElementById('listView').style.display = 'block';
+      document.getElementById('statsPanel').style.display = '';
       charts.forEach(function(c) { c.destroy(); });
       charts = [];
     }
