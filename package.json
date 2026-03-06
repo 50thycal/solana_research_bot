@@ -1,16 +1,14 @@
 {
   "name": "pumpfun-research-collector",
-  "version": "1.0.0",
-  "description": "Pump.fun early-window microstructure data collector and labeler",
+  "version": "2.0.0",
+  "description": "Pump.fun token price tracker with dashboard",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "dev:collect": "MODE=collect tsx src/index.ts",
-    "dev:label": "MODE=label tsx src/index.ts",
-    "dev:validate": "MODE=validate tsx src/index.ts",
-    "validate": "MODE=validate node dist/index.js"
+    "dev:dashboard": "MODE=dashboard tsx src/index.ts"
   },
   "keywords": [],
   "author": "",

@@ -25,6 +25,7 @@ export interface SnapshotRow {
   volume_velocity_sol: number | null;
   buyer_tx_ratio: number | null;
   sell_ratio: number | null;
+  market_cap_sol: number | null;
 }
 
 export interface SnapshotInsert {
@@ -51,6 +52,7 @@ export interface SnapshotInsert {
   volumeVelocitySol: number | null;
   buyerTxRatio: number | null;
   sellRatio: number | null;
+  marketCapSol: number | null;
 }
 
 /** Insert a snapshot row. Returns the inserted row's id. */
@@ -62,15 +64,17 @@ export function insertSnapshot(db: Database.Database, s: SnapshotInsert): number
       total_tx_count, tx_count_delta,
       buy_count, sell_count, unique_buyers, unique_sellers,
       sample_size, sample_total, sample_method,
-      buy_velocity, volume_velocity_sol, buyer_tx_ratio, sell_ratio
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      buy_velocity, volume_velocity_sol, buyer_tx_ratio, sell_ratio,
+      market_cap_sol
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     s.mint, s.runId, s.snapshotAt, s.secondsSinceCreation, s.phase,
     s.virtualSolReserves, s.virtualTokenReserves, s.realSolReserves, s.realTokenReserves, s.priceSol,
     s.totalTxCount, s.txCountDelta,
     s.buyCount, s.sellCount, s.uniqueBuyers, s.uniqueSellers,
     s.sampleSize, s.sampleTotal, s.sampleMethod,
-    s.buyVelocity, s.volumeVelocitySol, s.buyerTxRatio, s.sellRatio
+    s.buyVelocity, s.volumeVelocitySol, s.buyerTxRatio, s.sellRatio,
+    s.marketCapSol
   );
   return Number(result.lastInsertRowid);
 }

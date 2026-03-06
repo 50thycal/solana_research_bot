@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import { v1Migration } from './v1';
+import { v2Migration } from './v2';
 
 interface Migration {
   version: number;
@@ -9,6 +10,7 @@ interface Migration {
 
 const migrations: Migration[] = [
   v1Migration,
+  v2Migration,
 ];
 
 /**

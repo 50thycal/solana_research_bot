@@ -18,21 +18,12 @@ function envInt(key: string, defaultValue: number): number {
   return parsed;
 }
 
-function envFloat(key: string, defaultValue: number): number {
-  const raw = process.env[key];
-  if (raw === undefined) return defaultValue;
-  const parsed = parseFloat(raw);
-  if (isNaN(parsed)) throw new Error(`Invalid float for ${key}: ${raw}`);
-  if (parsed < 0) throw new Error(`${key} must be non-negative, got: ${parsed}`);
-  return parsed;
-}
-
-const mode = envStr('MODE', 'collect') as 'collect' | 'label' | 'validate';
+const mode = envStr('MODE', 'collect') as 'collect' | 'dashboard';
 
 export const config = {
   mode,
 
-  // Helius (required for collect mode, validated at startup)
+  // Helius (required for collect mode)
   heliusApiKey: envStr('HELIUS_API_KEY', ''),
   heliusRpcUrl: envStr('HELIUS_RPC_URL', ''),
   heliusWsUrl: envStr('HELIUS_WS_URL', ''),
@@ -40,24 +31,17 @@ export const config = {
   // Database
   dbPath: envStr('DB_PATH', './data/research.db'),
 
-  // Collect mode
-  observationWindowMinutes: envInt('OBSERVATION_WINDOW_MINUTES', 30),
-  earlySnapshotIntervalMs: envInt('EARLY_SNAPSHOT_INTERVAL_MS', 5000),
-  snapshotIntervalMs: envInt('SNAPSHOT_INTERVAL_MS', 10000),
-  outcomeSnapshotIntervalMs: envInt('OUTCOME_SNAPSHOT_INTERVAL_MS', 30000),
-  maxTrackMinutes: envInt('MAX_TRACK_MINUTES', 50),
-  maxTokensPerRun: envInt('MAX_TOKENS_PER_RUN', 150),
-  maxTxSamplePerToken: envInt('MAX_TX_SAMPLE_PER_TOKEN', 10),
-  maxTxSamplePerRound: envInt('MAX_TX_SAMPLE_PER_ROUND', 200),
+  // Collect mode — single-token tracking
+  /** How long to track each token (seconds). Default: 300 (5 minutes) */
+  trackingDurationSeconds: envInt('TRACKING_DURATION_SECONDS', 300),
+  /** Snapshot interval (seconds). Default: 5 */
+  snapshotIntervalSeconds: envInt('SNAPSHOT_INTERVAL_SECONDS', 5),
+  /** Max transactions to sample per snapshot for buy/sell classification */
+  maxTxSamplePerSnapshot: envInt('MAX_TX_SAMPLE_PER_SNAPSHOT', 10),
 
-  // Label mode
-  labelRunId: envStr('LABEL_RUN_ID', 'all'),
-  entryMinBuyCount: envInt('ENTRY_MIN_BUY_COUNT', 5),
-  entryMinUniqueBuyers: envInt('ENTRY_MIN_UNIQUE_BUYERS', 3),
-  entryMinBuyVelocity: envFloat('ENTRY_MIN_BUY_VELOCITY', 0.25),
-  entryMaxSellRatio: envFloat('ENTRY_MAX_SELL_RATIO', 0.20),
-  entryMaxSeconds: envInt('ENTRY_MAX_SECONDS', 120),
-  outcomeWindowSeconds: envInt('OUTCOME_WINDOW_SECONDS', 600),
+  // Dashboard
+  /** Port for the dashboard web server */
+  dashboardPort: envInt('PORT', 3000),
 } as const;
 
 /** Validate that required Helius credentials are set for collect mode */
