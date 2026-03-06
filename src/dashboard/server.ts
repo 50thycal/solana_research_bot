@@ -31,10 +31,11 @@ export async function runDashboard(db: Database.Database): Promise<void> {
   });
 
   return new Promise((resolve, reject) => {
-    server.listen(config.dashboardPort, () => {
+    server.listen(config.dashboardPort, '0.0.0.0', () => {
       console.log(JSON.stringify({
         event: 'dashboard_started',
         port: config.dashboardPort,
+        host: '0.0.0.0',
       }));
     });
 
