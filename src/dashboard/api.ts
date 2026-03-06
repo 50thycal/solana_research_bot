@@ -68,7 +68,9 @@ function getTokens(db: Database.Database, url: URL, res: http.ServerResponse): v
       (SELECT MAX(s.price_sol) FROM snapshots s WHERE s.mint = t.mint AND s.run_id = r.run_id) as max_price,
       (SELECT MIN(s.price_sol) FROM snapshots s WHERE s.mint = t.mint AND s.run_id = r.run_id AND s.price_sol IS NOT NULL) as min_price,
       (SELECT MAX(s.total_tx_count) FROM snapshots s WHERE s.mint = t.mint AND s.run_id = r.run_id) as max_tx_count,
-      (SELECT s.market_cap_sol FROM snapshots s WHERE s.mint = t.mint AND s.run_id = r.run_id ORDER BY s.seconds_since_creation DESC LIMIT 1) as last_market_cap
+      (SELECT s.market_cap_sol FROM snapshots s WHERE s.mint = t.mint AND s.run_id = r.run_id ORDER BY s.seconds_since_creation DESC LIMIT 1) as last_market_cap,
+      r.completed_at as analysis_ended_at,
+      (SELECT s.snapshot_at FROM snapshots s WHERE s.mint = t.mint AND s.run_id = r.run_id ORDER BY s.seconds_since_creation DESC LIMIT 1) as last_snapshot_at
     FROM tokens t
     INNER JOIN token_runs tr ON tr.mint = t.mint
     INNER JOIN runs r ON r.run_id = tr.run_id AND r.status = 'complete'

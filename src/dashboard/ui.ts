@@ -47,7 +47,7 @@ export function getDashboardHtml(): string {
       cursor: pointer;
       transition: border-color 0.2s, background 0.2s;
       display: grid;
-      grid-template-columns: 1fr 120px 120px 120px 100px;
+      grid-template-columns: 1fr 130px 100px 120px 140px 140px;
       align-items: center;
       gap: 16px;
     }
@@ -174,10 +174,19 @@ export function getDashboardHtml(): string {
 
     function formatPrice(price) {
       if (price == null) return '-';
-      if (price < 0.000001) return price.toExponential(2);
-      if (price < 0.001) return price.toFixed(8);
-      if (price < 1) return price.toFixed(6);
-      return price.toFixed(4);
+      if (price === 0) return '0';
+      if (price >= 1) return price.toFixed(4);
+      if (price >= 0.001) return price.toFixed(6);
+      // For very small prices, use subscript-zero notation: 0.0₄1234
+      var s = price.toFixed(20);
+      var match = s.match(/^0\\.0*/)
+      if (match) {
+        var zeroCount = match[0].length - 2; // subtract "0."
+        var sigDigits = price.toFixed(20).slice(match[0].length, match[0].length + 4).replace(/0+$/, '');
+        if (!sigDigits) sigDigits = '0';
+        return '0.0<sub>' + zeroCount + '</sub>' + sigDigits;
+      }
+      return price.toFixed(8);
     }
 
     function formatMarketCap(mc) {
@@ -187,7 +196,22 @@ export function getDashboardHtml(): string {
     }
 
     function formatTime(ts) {
-      return new Date(ts).toLocaleString();
+      if (!ts) return '-';
+      var d = new Date(ts);
+      return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' +
+             d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function timeAgo(ts) {
+      if (!ts) return '-';
+      var diff = Date.now() - ts;
+      var mins = Math.floor(diff / 60000);
+      if (mins < 1) return 'just now';
+      if (mins < 60) return mins + 'm ago';
+      var hrs = Math.floor(mins / 60);
+      if (hrs < 24) return hrs + 'h ago';
+      var days = Math.floor(hrs / 24);
+      return days + 'd ago';
     }
 
     function priceChangeClass(first, last) {
@@ -242,7 +266,8 @@ export function getDashboardHtml(): string {
             '<div class="token-metric"><div class="label">Price</div><div class="value">' + formatPrice(t.last_price) + '</div></div>' +
             '<div class="token-metric"><div class="label">Change</div><div class="value ' + cls + '">' + priceChangePct(t.first_price, t.last_price) + '</div></div>' +
             '<div class="token-metric"><div class="label">Mkt Cap</div><div class="value">' + formatMarketCap(t.last_market_cap) + '</div></div>' +
-            '<div class="token-metric"><div class="label">Snapshots</div><div class="value">' + t.snapshot_count + '</div></div>' +
+            '<div class="token-metric"><div class="label">Created</div><div class="value" style="font-size:12px">' + formatTime(t.created_at) + '</div></div>' +
+            '<div class="token-metric"><div class="label">Analysis Ended</div><div class="value" style="font-size:12px">' + formatTime(t.analysis_ended_at || t.last_snapshot_at) + '</div></div>' +
           '</div>';
         }).join('');
 
@@ -299,6 +324,8 @@ export function getDashboardHtml(): string {
           '<div class="summary-card"><div class="label">Total Txns</div><div class="value">' + (lastSnap.total_tx_count || 0) + '</div></div>' +
           '<div class="summary-card"><div class="label">Snapshots</div><div class="value">' + snaps.length + '</div></div>' +
           '<div class="summary-card"><div class="label">Duration</div><div class="value">' + Math.round(lastSnap.seconds_since_creation - firstSnap.seconds_since_creation) + 's</div></div>' +
+          '<div class="summary-card"><div class="label">Token Created</div><div class="value" style="font-size:14px">' + formatTime(t.created_at) + '</div></div>' +
+          '<div class="summary-card"><div class="label">Analysis Ended</div><div class="value" style="font-size:14px">' + formatTime(data.run ? data.run.completed_at : lastSnap.snapshot_at) + '</div></div>' +
         '</div>';
 
         html += '<div class="charts-grid">' +
@@ -312,7 +339,31 @@ export function getDashboardHtml(): string {
 
         // Build chart data
         var labels = snaps.map(function(s) { return Math.round(s.seconds_since_creation) + 's'; });
+        function formatChartPrice(val) {
+          if (val == null || val === 0) return '0';
+          if (val >= 1) return val.toFixed(2);
+          if (val >= 0.001) return val.toFixed(4);
+          var s = val.toFixed(20);
+          var m = s.match(/^0\\.0*/);
+          if (m) {
+            var zeros = m[0].length - 2;
+            var sig = val.toFixed(20).slice(m[0].length, m[0].length + 3).replace(/0+$/, '');
+            return '0.0{' + zeros + '}' + (sig || '0');
+          }
+          return val.toFixed(8);
+        }
+
         var chartOpts = {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { ticks: { color: '#555577', maxTicksLimit: 10 }, grid: { color: '#1e1e3a' } },
+            y: { ticks: { color: '#555577', callback: function(v) { return formatChartPrice(v); } }, grid: { color: '#1e1e3a' } }
+          }
+        };
+
+        var chartOptsPlain = {
           responsive: true,
           maintainAspectRatio: false,
           plugins: { legend: { display: false } },
@@ -373,7 +424,7 @@ export function getDashboardHtml(): string {
               borderWidth: 2,
             }]
           },
-          options: chartOpts
+          options: chartOptsPlain
         }));
 
         // Volume velocity chart
