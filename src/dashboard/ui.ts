@@ -197,14 +197,18 @@ export function getDashboardHtml(): string {
 
     function formatTime(ts) {
       if (!ts) return '-';
-      var d = new Date(ts);
-      return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' +
-             d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+      // created_at is in Unix seconds, other timestamps in ms
+      // If ts < 1e12, it's seconds; convert to ms
+      var ms = ts < 1e12 ? ts * 1000 : ts;
+      var d = new Date(ms);
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/Chicago' }) + ' ' +
+             d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Chicago' }) + ' CST';
     }
 
     function timeAgo(ts) {
       if (!ts) return '-';
-      var diff = Date.now() - ts;
+      var ms = ts < 1e12 ? ts * 1000 : ts;
+      var diff = Date.now() - ms;
       var mins = Math.floor(diff / 60000);
       if (mins < 1) return 'just now';
       if (mins < 60) return mins + 'm ago';
