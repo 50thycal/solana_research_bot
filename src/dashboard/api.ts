@@ -1,5 +1,14 @@
 import http from 'http';
 import Database from 'better-sqlite3';
+import {
+  extractFeatureVectors,
+  buildLabeledDataset,
+  buildFullDataset,
+  computeCorrelations,
+  buildScoringModel,
+  scoreToken,
+  backtestModel,
+} from '../analysis';
 
 function jsonResponse(res: http.ServerResponse, data: unknown, status = 200): void {
   res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -26,6 +35,22 @@ export function handleApiRequest(
 
     if (url.pathname === '/api/stats') {
       return getStats(db, res);
+    }
+
+    if (url.pathname === '/api/analysis/correlations') {
+      return getCorrelations(db, url, res);
+    }
+
+    if (url.pathname === '/api/analysis/backtest') {
+      return getBacktest(db, url, res);
+    }
+
+    if (url.pathname === '/api/analysis/score') {
+      return getScore(db, url, res);
+    }
+
+    if (url.pathname === '/api/analysis/model') {
+      return getModel(db, url, res);
     }
 
     errorResponse(res, 'Not found', 404);
@@ -219,4 +244,141 @@ function getStats(db: Database.Database, res: http.ServerResponse): void {
   `).get();
 
   jsonResponse(res, { stats, recentRun, activeRun });
+}
+
+// ─── Analysis Endpoints ───
+
+/**
+ * GET /api/analysis/correlations?checkpoint=30&full=true
+ * Returns feature correlations with hit_2x outcome.
+ */
+function getCorrelations(db: Database.Database, url: URL, res: http.ServerResponse): void {
+  const checkpoint = parseInt(url.searchParams.get('checkpoint') ?? '30', 10);
+  const full = url.searchParams.get('full') === 'true';
+
+  const dataset = full ? buildFullDataset(db, checkpoint) : buildLabeledDataset(db, checkpoint);
+
+  if (dataset.length < 5) {
+    return jsonResponse(res, {
+      error: 'Insufficient data',
+      datasetSize: dataset.length,
+      checkpoint,
+    });
+  }
+
+  const correlations = computeCorrelations(dataset);
+
+  jsonResponse(res, {
+    checkpoint,
+    datasetSize: dataset.length,
+    hit2xCount: dataset.filter(d => d.outcome.hitTwoX).length,
+    hit2xRate: (dataset.filter(d => d.outcome.hitTwoX).length / dataset.length) * 100,
+    correlations,
+  });
+}
+
+/**
+ * GET /api/analysis/backtest?checkpoint=30&full=true
+ * Returns full backtest report with scoring model and results.
+ */
+function getBacktest(db: Database.Database, url: URL, res: http.ServerResponse): void {
+  const checkpoint = parseInt(url.searchParams.get('checkpoint') ?? '30', 10);
+  const full = url.searchParams.get('full') === 'true';
+
+  const dataset = full ? buildFullDataset(db, checkpoint) : buildLabeledDataset(db, checkpoint);
+
+  if (dataset.length < 5) {
+    return jsonResponse(res, {
+      error: 'Insufficient data',
+      datasetSize: dataset.length,
+      checkpoint,
+    });
+  }
+
+  const correlations = computeCorrelations(dataset);
+  const model = buildScoringModel(correlations, dataset, checkpoint);
+  const report = backtestModel(model, dataset);
+
+  jsonResponse(res, report);
+}
+
+/**
+ * GET /api/analysis/score?mint=<mint>&checkpoint=30
+ * Score a specific token using the trained model.
+ * This is the endpoint the trading bot calls to get a buy signal.
+ */
+function getScore(db: Database.Database, url: URL, res: http.ServerResponse): void {
+  const mint = url.searchParams.get('mint');
+  if (!mint) {
+    return errorResponse(res, 'mint parameter required');
+  }
+
+  const checkpoint = parseInt(url.searchParams.get('checkpoint') ?? '30', 10);
+
+  // Build model from historical data
+  const dataset = buildFullDataset(db, checkpoint);
+  if (dataset.length < 5) {
+    return jsonResponse(res, {
+      error: 'Insufficient training data',
+      datasetSize: dataset.length,
+    });
+  }
+
+  const correlations = computeCorrelations(dataset);
+  const model = buildScoringModel(correlations, dataset, checkpoint);
+
+  // Get features for the requested token
+  const features = extractFeatureVectors(db, checkpoint);
+  const tokenFeatures = features.find(f => f.mint === mint);
+
+  if (!tokenFeatures) {
+    return errorResponse(res, `Token ${mint} not found at ${checkpoint}s checkpoint`, 404);
+  }
+
+  const score = scoreToken(model, tokenFeatures);
+
+  jsonResponse(res, {
+    ...score,
+    model: {
+      checkpointSeconds: model.checkpointSeconds,
+      sampleCount: model.sampleCount,
+      baseRate2x: model.baseRate2x,
+    },
+  });
+}
+
+/**
+ * GET /api/analysis/model?checkpoint=30&full=true
+ * Returns the current scoring model (rules + weights).
+ * The trading bot can cache this and run scoring locally.
+ */
+function getModel(db: Database.Database, url: URL, res: http.ServerResponse): void {
+  const checkpoint = parseInt(url.searchParams.get('checkpoint') ?? '30', 10);
+  const full = url.searchParams.get('full') === 'true';
+
+  const dataset = full ? buildFullDataset(db, checkpoint) : buildLabeledDataset(db, checkpoint);
+
+  if (dataset.length < 5) {
+    return jsonResponse(res, {
+      error: 'Insufficient data',
+      datasetSize: dataset.length,
+    });
+  }
+
+  const correlations = computeCorrelations(dataset);
+  const model = buildScoringModel(correlations, dataset, checkpoint);
+
+  jsonResponse(res, {
+    model,
+    correlations: correlations.slice(0, 10), // Top 10 features
+    datasetStats: {
+      totalTokens: dataset.length,
+      hit2xCount: dataset.filter(d => d.outcome.hitTwoX).length,
+      hit2xRate: (dataset.filter(d => d.outcome.hitTwoX).length / dataset.length) * 100,
+      categoryBreakdown: dataset.reduce((acc, d) => {
+        acc[d.outcome.category] = (acc[d.outcome.category] ?? 0) + 1;
+        return acc;
+      }, {} as Record<string, number>),
+    },
+  });
 }
