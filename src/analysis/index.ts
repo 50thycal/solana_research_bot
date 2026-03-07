@@ -6,6 +6,7 @@ export {
   type TokenFeatureVector,
   type LabeledToken,
   type FeatureCorrelation,
+  type TimeRange,
 } from './feature-engine';
 
 export {

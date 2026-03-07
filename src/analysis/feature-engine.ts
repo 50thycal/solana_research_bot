@@ -62,15 +62,35 @@ export interface FeatureCorrelation {
   accuracyAtThreshold: number;
 }
 
+/** Optional time range filter for analysis */
+export interface TimeRange {
+  startTime?: number; // Unix timestamp (seconds)
+  endTime?: number;   // Unix timestamp (seconds)
+}
+
 /**
  * Extract feature vectors for all tokens at a given checkpoint (seconds since creation).
  * Uses the closest snapshot to the requested checkpoint.
+ * Optionally filters tokens by creation time range.
  */
 export function extractFeatureVectors(
   db: Database.Database,
   checkpointSeconds: number,
-  maxCheckpointDrift: number = 10
+  maxCheckpointDrift: number = 10,
+  timeRange?: TimeRange
 ): TokenFeatureVector[] {
+  // Build optional time filter on token creation date
+  let timeFilter = '';
+  const timeParams: number[] = [];
+  if (timeRange?.startTime) {
+    timeFilter += ' AND t.created_at >= ?';
+    timeParams.push(timeRange.startTime);
+  }
+  if (timeRange?.endTime) {
+    timeFilter += ' AND t.created_at <= ?';
+    timeParams.push(timeRange.endTime);
+  }
+
   // Get the closest snapshot to the checkpoint for each token
   const rows = db.prepare(`
     WITH ranked AS (
@@ -81,10 +101,14 @@ export function extractFeatureVectors(
         ABS(s.seconds_since_creation - ?) as drift
       FROM snapshots s
       JOIN tokens t ON t.mint = s.mint
+      WHERE 1=1${timeFilter}
     )
     SELECT * FROM ranked
     WHERE rn = 1 AND drift <= ?
-  `).all(checkpointSeconds, checkpointSeconds, maxCheckpointDrift) as any[];
+  `).all(checkpointSeconds, checkpointSeconds, ...timeParams, maxCheckpointDrift) as any[];
+
+  // Collect mints that passed the time filter for use in subsequent queries
+  const mintSet = new Set(rows.map((r: any) => r.mint));
 
   // For momentum features, also get the snapshot ~10s before the checkpoint
   const prevRows = db.prepare(`
@@ -156,9 +180,10 @@ export function extractFeatureVectors(
  */
 export function buildLabeledDataset(
   db: Database.Database,
-  checkpointSeconds: number
+  checkpointSeconds: number,
+  timeRange?: TimeRange
 ): LabeledToken[] {
-  const features = extractFeatureVectors(db, checkpointSeconds);
+  const features = extractFeatureVectors(db, checkpointSeconds, 10, timeRange);
   const featureMap = new Map(features.map(f => [f.mint, f]));
 
   // Get outcomes
@@ -207,9 +232,10 @@ export function buildLabeledDataset(
  */
 export function buildFullDataset(
   db: Database.Database,
-  checkpointSeconds: number
+  checkpointSeconds: number,
+  timeRange?: TimeRange
 ): LabeledToken[] {
-  const features = extractFeatureVectors(db, checkpointSeconds);
+  const features = extractFeatureVectors(db, checkpointSeconds, 10, timeRange);
   const featureMap = new Map(features.map(f => [f.mint, f]));
 
   // Get all outcomes (both triggered and not)

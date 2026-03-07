@@ -437,6 +437,54 @@ export function getDashboardHtml(): string {
     }
     .analysis-controls input[type="checkbox"] { accent-color: #00d4ff; }
 
+    .time-range-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    .time-range-row label { font-size: 13px; color: #8888aa; }
+    .time-range-row input[type="datetime-local"] {
+      background: #1e1e3a;
+      color: #e0e0e0;
+      border: 1px solid #2a2a4a;
+      padding: 7px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-family: inherit;
+    }
+    .time-range-row input[type="datetime-local"]:focus { outline: none; border-color: #00d4ff; }
+    .quick-range-buttons {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .quick-range-btn {
+      background: #1e1e3a;
+      color: #8888aa;
+      border: 1px solid #2a2a4a;
+      padding: 5px 12px;
+      border-radius: 14px;
+      font-size: 12px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.15s;
+    }
+    .quick-range-btn:hover { border-color: #00d4ff; color: #00d4ff; }
+    .quick-range-btn.active { background: rgba(0,212,255,0.15); border-color: #00d4ff; color: #00d4ff; }
+    .clear-range-btn {
+      background: transparent;
+      color: #6666aa;
+      border: 1px solid #2a2a4a;
+      padding: 5px 10px;
+      border-radius: 14px;
+      font-size: 11px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .clear-range-btn:hover { border-color: #ff5252; color: #ff5252; }
+
     .analysis-section {
       background: #12121f;
       border: 1px solid #1e1e3a;
@@ -644,6 +692,23 @@ export function getDashboardHtml(): string {
   <!-- ═══ ANALYSIS TAB ═══ -->
   <div class="tab-content" id="tab-analysis">
     <div class="container">
+      <div class="time-range-row">
+        <label>Time Range:</label>
+        <div class="quick-range-buttons">
+          <button class="quick-range-btn" onclick="setQuickRange(1)">1h</button>
+          <button class="quick-range-btn" onclick="setQuickRange(3)">3h</button>
+          <button class="quick-range-btn" onclick="setQuickRange(6)">6h</button>
+          <button class="quick-range-btn" onclick="setQuickRange(12)">12h</button>
+          <button class="quick-range-btn" onclick="setQuickRange(24)">24h</button>
+          <button class="quick-range-btn" onclick="setQuickRange(48)">48h</button>
+          <button class="clear-range-btn" onclick="clearTimeRange()">Clear</button>
+        </div>
+      </div>
+      <div class="time-range-row">
+        <label>From: <input type="datetime-local" id="analysisStartTime" onchange="onTimeInputChange()"></label>
+        <label>To: <input type="datetime-local" id="analysisEndTime" onchange="onTimeInputChange()"></label>
+      </div>
+
       <div class="analysis-controls">
         <label>Checkpoint:
           <select id="checkpointSelect">
@@ -1258,6 +1323,43 @@ export function getDashboardHtml(): string {
     // ═══ Analysis tab ═══
     var analysisCharts = [];
 
+    function toLocalDatetimeStr(date) {
+      // Format Date to "YYYY-MM-DDThh:mm" for datetime-local input
+      var y = date.getFullYear();
+      var m = String(date.getMonth() + 1).padStart(2, '0');
+      var d = String(date.getDate()).padStart(2, '0');
+      var h = String(date.getHours()).padStart(2, '0');
+      var min = String(date.getMinutes()).padStart(2, '0');
+      return y + '-' + m + '-' + d + 'T' + h + ':' + min;
+    }
+
+    function setQuickRange(hours) {
+      var now = new Date();
+      var start = new Date(now.getTime() - hours * 60 * 60 * 1000);
+      document.getElementById('analysisStartTime').value = toLocalDatetimeStr(start);
+      document.getElementById('analysisEndTime').value = toLocalDatetimeStr(now);
+      // Highlight the active quick button
+      var btns = document.querySelectorAll('.quick-range-btn');
+      btns.forEach(function(b) { b.classList.remove('active'); });
+      // Find the button matching this hours value
+      btns.forEach(function(b) {
+        if (b.textContent === hours + 'h') b.classList.add('active');
+      });
+    }
+
+    function clearTimeRange() {
+      document.getElementById('analysisStartTime').value = '';
+      document.getElementById('analysisEndTime').value = '';
+      var btns = document.querySelectorAll('.quick-range-btn');
+      btns.forEach(function(b) { b.classList.remove('active'); });
+    }
+
+    function onTimeInputChange() {
+      // When user manually edits dates, clear quick-select highlighting
+      var btns = document.querySelectorAll('.quick-range-btn');
+      btns.forEach(function(b) { b.classList.remove('active'); });
+    }
+
     async function runAnalysis() {
       var btn = document.getElementById('runAnalysisBtn');
       btn.disabled = true;
@@ -1265,15 +1367,25 @@ export function getDashboardHtml(): string {
 
       var checkpoint = document.getElementById('checkpointSelect').value;
       var full = document.getElementById('fullDatasetCheck').checked;
+      var startVal = document.getElementById('analysisStartTime').value;
+      var endVal = document.getElementById('analysisEndTime').value;
       var resultsEl = document.getElementById('analysisResults');
-      resultsEl.innerHTML = '<div class="loading">Running analysis at ' + checkpoint + 's checkpoint...</div>';
+
+      var rangeLabel = '';
+      if (startVal || endVal) {
+        rangeLabel = ' for ' + (startVal ? new Date(startVal).toLocaleString() : 'all') + ' — ' + (endVal ? new Date(endVal).toLocaleString() : 'now');
+      }
+      resultsEl.innerHTML = '<div class="loading">Running analysis at ' + checkpoint + 's checkpoint' + rangeLabel + '...</div>';
 
       // Destroy old analysis charts
       analysisCharts.forEach(function(c) { c.destroy(); });
       analysisCharts = [];
 
       try {
-        var data = await fetchJson('/api/analysis/backtest?checkpoint=' + checkpoint + '&full=' + full);
+        var apiUrl = '/api/analysis/backtest?checkpoint=' + checkpoint + '&full=' + full;
+        if (startVal) apiUrl += '&start=' + Math.floor(new Date(startVal).getTime() / 1000);
+        if (endVal) apiUrl += '&end=' + Math.floor(new Date(endVal).getTime() / 1000);
+        var data = await fetchJson(apiUrl);
 
         if (data.error) {
           resultsEl.innerHTML = '<div class="empty-state"><h3>' + esc(data.error) + '</h3>' +
