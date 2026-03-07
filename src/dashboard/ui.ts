@@ -374,6 +374,193 @@ export function getDashboardHtml(): string {
     .loading { text-align: center; padding: 60px; color: #555577; font-size: 16px; }
     .empty-state { text-align: center; padding: 80px; color: #555577; }
     .empty-state h3 { font-size: 20px; color: #8888aa; margin-bottom: 8px; }
+
+    /* Tab navigation */
+    .nav-tabs {
+      display: flex;
+      gap: 0;
+      background: #0e0e1a;
+      border-bottom: 1px solid #2a2a4a;
+      padding: 0 30px;
+    }
+    .nav-tab {
+      padding: 12px 24px;
+      font-size: 14px;
+      color: #6666aa;
+      cursor: pointer;
+      border: none;
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s;
+      background: none;
+      font-family: inherit;
+    }
+    .nav-tab:hover { color: #ccc; }
+    .nav-tab.active { color: #00d4ff; border-bottom-color: #00d4ff; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* Analysis page styles */
+    .analysis-controls {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 24px;
+      flex-wrap: wrap;
+    }
+    .analysis-controls label { font-size: 13px; color: #8888aa; }
+    .analysis-controls select {
+      background: #1e1e3a;
+      color: #e0e0e0;
+      border: 1px solid #2a2a4a;
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-family: inherit;
+    }
+    .analysis-controls select:focus { outline: none; border-color: #00d4ff; }
+    .run-btn {
+      background: linear-gradient(135deg, #00d4ff 0%, #7c4dff 100%);
+      color: #fff;
+      border: none;
+      cursor: pointer;
+      font-weight: 600;
+      padding: 8px 24px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-family: inherit;
+      transition: opacity 0.2s;
+    }
+    .run-btn:hover { opacity: 0.85; }
+    .run-btn:disabled { opacity: 0.4; cursor: default; }
+    .analysis-controls .checkbox-label {
+      display: flex; align-items: center; gap: 6px; cursor: pointer;
+    }
+    .analysis-controls input[type="checkbox"] { accent-color: #00d4ff; }
+
+    .analysis-section {
+      background: #12121f;
+      border: 1px solid #1e1e3a;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .analysis-section h3 {
+      font-size: 16px;
+      color: #00d4ff;
+      margin-bottom: 16px;
+      font-weight: 600;
+    }
+
+    .corr-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .corr-table th {
+      text-align: left;
+      padding: 8px 12px;
+      color: #6666aa;
+      font-size: 11px;
+      text-transform: uppercase;
+      border-bottom: 1px solid #2a2a4a;
+    }
+    .corr-table td {
+      padding: 8px 12px;
+      border-bottom: 1px solid #1a1a2e;
+    }
+    .corr-table tr:hover { background: #161630; }
+    .corr-bar {
+      display: inline-block;
+      height: 8px;
+      border-radius: 4px;
+      vertical-align: middle;
+    }
+    .corr-positive { background: #00e676; }
+    .corr-negative { background: #ff5252; }
+
+    .backtest-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .backtest-table th {
+      text-align: right;
+      padding: 8px 10px;
+      color: #6666aa;
+      font-size: 11px;
+      text-transform: uppercase;
+      border-bottom: 1px solid #2a2a4a;
+    }
+    .backtest-table th:first-child { text-align: left; }
+    .backtest-table td {
+      text-align: right;
+      padding: 8px 10px;
+      border-bottom: 1px solid #1a1a2e;
+    }
+    .backtest-table td:first-child { text-align: left; }
+    .backtest-table tr:hover { background: #161630; }
+    .backtest-table tr.best-row { background: rgba(0, 212, 255, 0.08); }
+    .backtest-table tr.best-row td { color: #00d4ff; font-weight: 600; }
+
+    .model-rules {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 12px;
+    }
+    .rule-card {
+      background: #0e0e1a;
+      border: 1px solid #1e1e3a;
+      border-radius: 6px;
+      padding: 12px 16px;
+    }
+    .rule-card .rule-name { font-size: 13px; color: #00d4ff; font-weight: 600; }
+    .rule-card .rule-detail { font-size: 12px; color: #8888aa; margin-top: 4px; }
+    .rule-weight-bar {
+      height: 4px;
+      background: #1e1e3a;
+      border-radius: 2px;
+      margin-top: 6px;
+      overflow: hidden;
+    }
+    .rule-weight-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #00d4ff, #7c4dff);
+      border-radius: 2px;
+    }
+
+    .best-threshold-card {
+      background: linear-gradient(135deg, rgba(0, 212, 255, 0.08) 0%, rgba(124, 77, 255, 0.08) 100%);
+      border: 1px solid rgba(0, 212, 255, 0.3);
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .best-threshold-card h3 { color: #00d4ff; margin-bottom: 12px; font-size: 16px; font-weight: 600; }
+    .best-metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 12px;
+    }
+    .best-metric .bm-label { font-size: 11px; color: #6666aa; text-transform: uppercase; }
+    .best-metric .bm-value { font-size: 20px; font-weight: 700; color: #fff; margin-top: 2px; }
+    .best-metric .bm-sub { font-size: 11px; color: #555577; margin-top: 2px; }
+
+    .category-grid {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .cat-chip {
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .cat-moon { background: rgba(0, 230, 118, 0.15); color: #00e676; }
+    .cat-pump_dump { background: rgba(255, 152, 0, 0.15); color: #ff9800; }
+    .cat-rug { background: rgba(255, 82, 82, 0.15); color: #ff5252; }
+    .cat-slow_bleed { background: rgba(255, 82, 82, 0.1); color: #ef9a9a; }
+    .cat-flat { background: rgba(136, 136, 170, 0.1); color: #8888aa; }
   </style>
 </head>
 <body>
@@ -388,62 +575,99 @@ export function getDashboardHtml(): string {
     <span class="status-detail" id="statusDetail"></span>
   </div>
 
-  <div class="container">
-    <!-- Stats Overview -->
-    <div class="stats-panel" id="statsPanel"></div>
+  <div class="nav-tabs">
+    <button class="nav-tab active" onclick="switchTab('tokens')">Tokens</button>
+    <button class="nav-tab" onclick="switchTab('analysis')">Analysis</button>
+  </div>
 
-    <!-- List View -->
-    <div class="list-view" id="listView">
-      <!-- Filter Bar -->
-      <div class="filter-bar" id="filterBar">
-        <div class="filter-row">
-          <input type="text" class="filter-search" id="filterSearch" placeholder="Search name, symbol, or mint..." />
-          <div class="filter-group">
-            <label>Price:</label>
-            <input type="text" class="filter-input" id="filterMinPrice" placeholder="Min" />
-            <span style="color:#555577">-</span>
-            <input type="text" class="filter-input" id="filterMaxPrice" placeholder="Max" />
+  <!-- ═══ TOKENS TAB ═══ -->
+  <div class="tab-content active" id="tab-tokens">
+    <div class="container">
+      <div class="stats-panel" id="statsPanel"></div>
+
+      <!-- List View -->
+      <div class="list-view" id="listView">
+        <!-- Filter Bar -->
+        <div class="filter-bar" id="filterBar">
+          <div class="filter-row">
+            <input type="text" class="filter-search" id="filterSearch" placeholder="Search name, symbol, or mint..." />
+            <div class="filter-group">
+              <label>Price:</label>
+              <input type="text" class="filter-input" id="filterMinPrice" placeholder="Min" />
+              <span style="color:#555577">-</span>
+              <input type="text" class="filter-input" id="filterMaxPrice" placeholder="Max" />
+            </div>
+            <div class="filter-group">
+              <label>Change%:</label>
+              <input type="text" class="filter-input" id="filterMinChange" placeholder="Min" />
+              <span style="color:#555577">-</span>
+              <input type="text" class="filter-input" id="filterMaxChange" placeholder="Max" />
+            </div>
+            <div class="filter-group">
+              <label>MCap:</label>
+              <input type="text" class="filter-input" id="filterMinMcap" placeholder="Min" />
+              <span style="color:#555577">-</span>
+              <input type="text" class="filter-input" id="filterMaxMcap" placeholder="Max" />
+            </div>
+            <button class="filter-apply" onclick="applyFilters()">Apply</button>
+            <button class="filter-clear" onclick="clearFilters()">Clear</button>
           </div>
-          <div class="filter-group">
-            <label>Change%:</label>
-            <input type="text" class="filter-input" id="filterMinChange" placeholder="Min" />
-            <span style="color:#555577">-</span>
-            <input type="text" class="filter-input" id="filterMaxChange" placeholder="Max" />
-          </div>
-          <div class="filter-group">
-            <label>MCap:</label>
-            <input type="text" class="filter-input" id="filterMinMcap" placeholder="Min" />
-            <span style="color:#555577">-</span>
-            <input type="text" class="filter-input" id="filterMaxMcap" placeholder="Max" />
-          </div>
-          <button class="filter-apply" onclick="applyFilters()">Apply</button>
-          <button class="filter-clear" onclick="clearFilters()">Clear</button>
+          <div class="active-filters" id="activeFilters"></div>
         </div>
-        <div class="active-filters" id="activeFilters"></div>
+
+        <div class="controls-bar">
+          <div class="sort-bar" id="sortBar"></div>
+          <div class="selection-bar">
+            <label class="select-all-wrap">
+              <input type="checkbox" class="token-checkbox" id="selectAll" onchange="toggleSelectAll(this.checked)" />
+              Select all
+            </label>
+            <button class="copy-btn" id="copySelectedBtn" onclick="copySelected()" disabled>Copy Selected (0)</button>
+          </div>
+        </div>
+        <div class="token-list" id="tokenList">
+          <div class="loading">Loading tokens...</div>
+        </div>
+        <div class="pagination" id="pagination"></div>
       </div>
 
-      <div class="controls-bar">
-        <div class="sort-bar" id="sortBar"></div>
-        <div class="selection-bar">
-          <label class="select-all-wrap">
-            <input type="checkbox" class="token-checkbox" id="selectAll" onchange="toggleSelectAll(this.checked)" />
-            Select all
-          </label>
-          <button class="copy-btn" id="copySelectedBtn" onclick="copySelected()" disabled>Copy Selected (0)</button>
-        </div>
+      <div class="toast" id="toast"></div>
+
+      <!-- Detail View -->
+      <div class="detail-view" id="detailView">
+        <button class="back-btn" onclick="showList()">&larr; Back to list</button>
+        <div id="detailContent"></div>
       </div>
-      <div class="token-list" id="tokenList">
-        <div class="loading">Loading tokens...</div>
-      </div>
-      <div class="pagination" id="pagination"></div>
     </div>
+  </div>
 
-    <div class="toast" id="toast"></div>
+  <!-- ═══ ANALYSIS TAB ═══ -->
+  <div class="tab-content" id="tab-analysis">
+    <div class="container">
+      <div class="analysis-controls">
+        <label>Checkpoint:
+          <select id="checkpointSelect">
+            <option value="15">15s</option>
+            <option value="30" selected>30s</option>
+            <option value="45">45s</option>
+            <option value="60">60s</option>
+            <option value="90">90s</option>
+            <option value="120">120s</option>
+          </select>
+        </label>
+        <label class="checkbox-label">
+          <input type="checkbox" id="fullDatasetCheck" checked>
+          Include all tokens (not just labeled)
+        </label>
+        <button class="run-btn" id="runAnalysisBtn" onclick="runAnalysis()">Run Analysis</button>
+      </div>
 
-    <!-- Detail View -->
-    <div class="detail-view" id="detailView">
-      <button class="back-btn" onclick="showList()">&larr; Back to list</button>
-      <div id="detailContent"></div>
+      <div id="analysisResults">
+        <div class="empty-state">
+          <h3>No analysis run yet</h3>
+          <p>Select a checkpoint and click "Run Analysis" to discover which early-stage features predict profitable tokens.</p>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -1022,6 +1246,199 @@ export function getDashboardHtml(): string {
       d.textContent = s;
       return d.innerHTML;
     }
+
+    // ═══ Tab switching ═══
+    function switchTab(tab) {
+      document.querySelectorAll('.nav-tab').forEach(function(el) { el.classList.remove('active'); });
+      document.querySelectorAll('.tab-content').forEach(function(el) { el.classList.remove('active'); });
+      document.querySelector('.nav-tab[onclick*="' + tab + '"]').classList.add('active');
+      document.getElementById('tab-' + tab).classList.add('active');
+    }
+
+    // ═══ Analysis tab ═══
+    var analysisCharts = [];
+
+    async function runAnalysis() {
+      var btn = document.getElementById('runAnalysisBtn');
+      btn.disabled = true;
+      btn.textContent = 'Analyzing...';
+
+      var checkpoint = document.getElementById('checkpointSelect').value;
+      var full = document.getElementById('fullDatasetCheck').checked;
+      var resultsEl = document.getElementById('analysisResults');
+      resultsEl.innerHTML = '<div class="loading">Running analysis at ' + checkpoint + 's checkpoint...</div>';
+
+      // Destroy old analysis charts
+      analysisCharts.forEach(function(c) { c.destroy(); });
+      analysisCharts = [];
+
+      try {
+        var data = await fetchJson('/api/analysis/backtest?checkpoint=' + checkpoint + '&full=' + full);
+
+        if (data.error) {
+          resultsEl.innerHTML = '<div class="empty-state"><h3>' + esc(data.error) + '</h3>' +
+            '<p>Dataset size: ' + (data.datasetSize || 0) + ' tokens. Need at least 5.</p></div>';
+          return;
+        }
+
+        var html = '';
+
+        // ─── Best Threshold Card ───
+        var best = data.bestThreshold;
+        var improvement = data.baseRate2x > 0 ? (best.hitTwoXRate / data.baseRate2x).toFixed(1) : 'N/A';
+        var coverage = data.model.sampleCount > 0 ? ((best.tokensAboveThreshold / data.model.sampleCount) * 100).toFixed(1) : '0';
+
+        html += '<div class="best-threshold-card">' +
+          '<h3>Optimal Trading Signal</h3>' +
+          '<div class="best-metrics">' +
+            '<div class="best-metric"><div class="bm-label">Score Threshold</div><div class="bm-value">' + best.scoreThreshold + '</div><div class="bm-sub">out of 100</div></div>' +
+            '<div class="best-metric"><div class="bm-label">Hit 2x Rate</div><div class="bm-value price-up">' + best.hitTwoXRate.toFixed(1) + '%</div><div class="bm-sub">vs ' + data.baseRate2x.toFixed(1) + '% base rate</div></div>' +
+            '<div class="best-metric"><div class="bm-label">Improvement</div><div class="bm-value">' + improvement + 'x</div><div class="bm-sub">over random</div></div>' +
+            '<div class="best-metric"><div class="bm-label">Avg Max Gain</div><div class="bm-value price-up">' + best.avgMaxGain.toFixed(1) + '%</div></div>' +
+            '<div class="best-metric"><div class="bm-label">Avg Final Gain</div><div class="bm-value ' + (best.avgFinalGain >= 0 ? 'price-up' : 'price-down') + '">' + best.avgFinalGain.toFixed(1) + '%</div></div>' +
+            '<div class="best-metric"><div class="bm-label">Avg Max Drawdown</div><div class="bm-value price-down">' + best.avgMaxDrawdown.toFixed(1) + '%</div></div>' +
+            '<div class="best-metric"><div class="bm-label">Tokens Passing</div><div class="bm-value">' + best.tokensAboveThreshold + '</div><div class="bm-sub">' + coverage + '% of dataset</div></div>' +
+            '<div class="best-metric"><div class="bm-label">Sample Size</div><div class="bm-value">' + data.model.sampleCount + '</div><div class="bm-sub">tokens analyzed</div></div>' +
+          '</div>';
+
+        // Category breakdown chips
+        if (best.categoryBreakdown && Object.keys(best.categoryBreakdown).length > 0) {
+          html += '<div style="margin-top:16px"><div style="font-size:11px;color:#6666aa;text-transform:uppercase;margin-bottom:8px">Category Breakdown (at best threshold)</div>';
+          html += '<div class="category-grid">';
+          var catOrder = ['moon', 'pump_dump', 'rug', 'slow_bleed', 'flat'];
+          catOrder.forEach(function(cat) {
+            var count = best.categoryBreakdown[cat] || 0;
+            if (count > 0) {
+              var pct = (count / best.tokensAboveThreshold * 100).toFixed(1);
+              html += '<span class="cat-chip cat-' + cat + '">' + cat.replace('_', ' ') + ': ' + count + ' (' + pct + '%)</span>';
+            }
+          });
+          html += '</div></div>';
+        }
+        html += '</div>';
+
+        // ─── Scoring Model Rules ───
+        html += '<div class="analysis-section"><h3>Scoring Model Rules</h3>';
+        html += '<p style="font-size:12px;color:#6666aa;margin-bottom:14px">These are the features and weights the model uses to score tokens at ' + checkpoint + 's after creation.</p>';
+        html += '<div class="model-rules">';
+        data.model.rules.forEach(function(rule) {
+          var dir = rule.direction === 'above' ? 'Higher is better' : 'Lower is better';
+          html += '<div class="rule-card">' +
+            '<div class="rule-name">' + esc(rule.featureName) + '</div>' +
+            '<div class="rule-detail">' + dir + ' | Threshold: ' + rule.threshold.toFixed(4) + '</div>' +
+            '<div class="rule-weight-bar"><div class="rule-weight-fill" style="width:' + (rule.weight * 100) + '%"></div></div>' +
+            '<div style="font-size:11px;color:#555577;margin-top:2px">' + (rule.weight * 100).toFixed(1) + '% weight</div>' +
+          '</div>';
+        });
+        html += '</div></div>';
+
+        // ─── Backtest Results Table ───
+        html += '<div class="analysis-section"><h3>Backtest Results by Score Threshold</h3>';
+        html += '<table class="backtest-table"><thead><tr>' +
+          '<th style="text-align:left">Threshold</th><th>Tokens</th><th>Hit 2x</th><th>2x Rate</th><th>Avg Max Gain</th><th>Avg Final Gain</th><th>Avg Drawdown</th>' +
+          '</tr></thead><tbody>';
+
+        data.results.forEach(function(r) {
+          if (r.tokensAboveThreshold === 0) return;
+          var isBest = r.scoreThreshold === best.scoreThreshold;
+          html += '<tr class="' + (isBest ? 'best-row' : '') + '">' +
+            '<td style="text-align:left">' + r.scoreThreshold + (isBest ? ' (best)' : '') + '</td>' +
+            '<td>' + r.tokensAboveThreshold + '</td>' +
+            '<td>' + r.hitTwoXCount + '</td>' +
+            '<td>' + r.hitTwoXRate.toFixed(1) + '%</td>' +
+            '<td>' + r.avgMaxGain.toFixed(1) + '%</td>' +
+            '<td class="' + (r.avgFinalGain >= 0 ? 'price-up' : 'price-down') + '">' + r.avgFinalGain.toFixed(1) + '%</td>' +
+            '<td class="price-down">' + r.avgMaxDrawdown.toFixed(1) + '%</td>' +
+          '</tr>';
+        });
+        html += '</tbody></table></div>';
+
+        // ─── Charts: Hit Rate vs Threshold & Category Distribution ───
+        html += '<div class="charts-grid">' +
+          '<div class="chart-box"><h3>Hit 2x Rate by Score Threshold</h3><canvas id="hitRateChart"></canvas></div>' +
+          '<div class="chart-box"><h3>Category Distribution (All Data)</h3><canvas id="categoryChart"></canvas></div>' +
+        '</div>';
+
+        resultsEl.innerHTML = html;
+
+        // Build charts
+        var thresholds = data.results.filter(function(r) { return r.tokensAboveThreshold > 0; });
+
+        // Hit rate chart
+        analysisCharts.push(new Chart(document.getElementById('hitRateChart'), {
+          type: 'line',
+          data: {
+            labels: thresholds.map(function(r) { return r.scoreThreshold; }),
+            datasets: [
+              {
+                label: 'Hit 2x Rate',
+                data: thresholds.map(function(r) { return r.hitTwoXRate; }),
+                borderColor: '#00e676',
+                backgroundColor: 'rgba(0, 230, 118, 0.1)',
+                fill: true,
+                tension: 0.3,
+                pointRadius: 3,
+                borderWidth: 2,
+                yAxisID: 'y',
+              },
+              {
+                label: 'Tokens Passing',
+                data: thresholds.map(function(r) { return r.tokensAboveThreshold; }),
+                borderColor: '#7c4dff',
+                borderDash: [5, 5],
+                tension: 0.3,
+                pointRadius: 2,
+                borderWidth: 1.5,
+                yAxisID: 'y1',
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { labels: { color: '#8888aa' } } },
+            scales: {
+              x: { title: { display: true, text: 'Score Threshold', color: '#6666aa' }, ticks: { color: '#555577' }, grid: { color: '#1e1e3a' } },
+              y: { title: { display: true, text: 'Hit 2x Rate (%)', color: '#6666aa' }, ticks: { color: '#555577' }, grid: { color: '#1e1e3a' }, position: 'left' },
+              y1: { title: { display: true, text: 'Tokens', color: '#6666aa' }, ticks: { color: '#555577' }, grid: { display: false }, position: 'right' },
+            }
+          }
+        }));
+
+        // Category distribution chart - show at best threshold
+        var catLabels = Object.keys(best.categoryBreakdown || {});
+        var catColors = { moon: '#00e676', pump_dump: '#ff9800', rug: '#ff5252', slow_bleed: '#ef9a9a', flat: '#8888aa' };
+        if (catLabels.length > 0) {
+          analysisCharts.push(new Chart(document.getElementById('categoryChart'), {
+            type: 'doughnut',
+            data: {
+              labels: catLabels.map(function(c) { return c.replace('_', ' '); }),
+              datasets: [{
+                data: catLabels.map(function(c) { return best.categoryBreakdown[c]; }),
+                backgroundColor: catLabels.map(function(c) { return catColors[c] || '#555577'; }),
+                borderWidth: 0,
+              }]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: { position: 'right', labels: { color: '#ccc', padding: 12 } },
+              }
+            }
+          }));
+        }
+
+      } catch (e) {
+        resultsEl.innerHTML = '<div class="empty-state"><h3>Analysis Failed</h3><p>' + esc(String(e)) + '</p></div>';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Run Analysis';
+      }
+    }
+
+    // ═══ Multi-checkpoint comparison ═══
+    // (available via the checkpoint dropdown; user can re-run at different checkpoints)
 
     // Initial load
     loadStats();
