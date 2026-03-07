@@ -59,14 +59,31 @@ function getTokens(db: Database.Database, url: URL, res: http.ServerResponse): v
   const sortCol = allowedSorts[sortParam] ?? 'analysis_ended_at';
   const sortDir = orderParam.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
 
-  const countRow = db.prepare(`
-    SELECT COUNT(DISTINCT t.mint) as total
-    FROM tokens t
-    INNER JOIN runs r ON r.run_id IN (SELECT run_id FROM token_runs WHERE mint = t.mint)
-    WHERE r.status = 'complete'
-  `).get() as { total: number };
+  // Filters
+  const search = url.searchParams.get('search') ?? '';
+  const parseNum = (v: string | null): number | null => {
+    if (v == null || v === '') return null;
+    const n = parseFloat(v);
+    return isNaN(n) ? null : n;
+  };
+  const minPrice = parseNum(url.searchParams.get('min_price'));
+  const maxPrice = parseNum(url.searchParams.get('max_price'));
+  const minChange = parseNum(url.searchParams.get('min_change'));
+  const maxChange = parseNum(url.searchParams.get('max_change'));
+  const minMcap = parseNum(url.searchParams.get('min_mcap'));
+  const maxMcap = parseNum(url.searchParams.get('max_mcap'));
 
-  const tokens = db.prepare(`
+  // Build dynamic WHERE clauses for filters (applied to outer query via HAVING-style CTE)
+  const filterClauses: string[] = [];
+  const filterParams: unknown[] = [];
+
+  if (search) {
+    filterClauses.push(`(t.name LIKE ? OR t.symbol LIKE ? OR t.mint LIKE ?)`);
+    const like = `%${search}%`;
+    filterParams.push(like, like, like);
+  }
+
+  const baseQuery = `
     SELECT
       t.mint,
       t.name,
@@ -95,9 +112,30 @@ function getTokens(db: Database.Database, url: URL, res: http.ServerResponse): v
     FROM tokens t
     INNER JOIN token_runs tr ON tr.mint = t.mint
     INNER JOIN runs r ON r.run_id = tr.run_id AND r.status = 'complete'
+    ${filterClauses.length > 0 ? 'WHERE ' + filterClauses.join(' AND ') : ''}
+  `;
+
+  // Wrap in CTE to filter on computed columns (last_price, change_pct, last_market_cap)
+  const havingClauses: string[] = [];
+  const havingParams: unknown[] = [];
+  if (minPrice != null) { havingClauses.push('last_price >= ?'); havingParams.push(minPrice); }
+  if (maxPrice != null) { havingClauses.push('last_price <= ?'); havingParams.push(maxPrice); }
+  if (minChange != null) { havingClauses.push('change_pct >= ?'); havingParams.push(minChange); }
+  if (maxChange != null) { havingClauses.push('change_pct <= ?'); havingParams.push(maxChange); }
+  if (minMcap != null) { havingClauses.push('last_market_cap >= ?'); havingParams.push(minMcap); }
+  if (maxMcap != null) { havingClauses.push('last_market_cap <= ?'); havingParams.push(maxMcap); }
+
+  const havingWhere = havingClauses.length > 0 ? 'WHERE ' + havingClauses.join(' AND ') : '';
+
+  const countRow = db.prepare(`
+    SELECT COUNT(*) as total FROM (${baseQuery}) sub ${havingWhere}
+  `).get(...filterParams, ...havingParams) as { total: number };
+
+  const tokens = db.prepare(`
+    SELECT * FROM (${baseQuery}) sub ${havingWhere}
     ORDER BY ${sortCol} ${sortDir}
     LIMIT ? OFFSET ?
-  `).all(limit, offset) as any[];
+  `).all(...filterParams, ...havingParams, limit, offset) as any[];
 
   jsonResponse(res, {
     tokens,
