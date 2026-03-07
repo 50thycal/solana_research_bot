@@ -74,12 +74,115 @@ export function getDashboardHtml(): string {
     .stat-card .stat-value { font-size: 22px; font-weight: 700; color: #fff; }
     .stat-card .stat-sub { font-size: 11px; color: #555577; margin-top: 2px; }
 
+    /* Filter bar */
+    .filter-bar {
+      background: #12121f;
+      border: 1px solid #1e1e3a;
+      border-radius: 8px;
+      padding: 14px 18px;
+      margin-bottom: 14px;
+    }
+    .filter-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .filter-search {
+      background: #0a0a0f;
+      border: 1px solid #2a2a4a;
+      color: #e0e0e0;
+      padding: 6px 12px;
+      border-radius: 4px;
+      font-size: 13px;
+      width: 220px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .filter-search:focus { border-color: #00d4ff; }
+    .filter-search::placeholder { color: #555577; }
+    .filter-group {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      color: #6666aa;
+    }
+    .filter-group label { white-space: nowrap; }
+    .filter-input {
+      background: #0a0a0f;
+      border: 1px solid #2a2a4a;
+      color: #e0e0e0;
+      padding: 5px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      width: 80px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .filter-input:focus { border-color: #00d4ff; }
+    .filter-input::placeholder { color: #444466; }
+    .filter-apply {
+      background: #00d4ff22;
+      border: 1px solid #00d4ff;
+      color: #00d4ff;
+      padding: 5px 14px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+    .filter-apply:hover { background: #00d4ff33; }
+    .filter-clear {
+      background: none;
+      border: 1px solid #2a2a4a;
+      color: #8888aa;
+      padding: 5px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: all 0.2s;
+    }
+    .filter-clear:hover { border-color: #ff5252; color: #ff5252; }
+    .active-filters {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+    .filter-tag {
+      background: #1e1e3a;
+      border: 1px solid #2a2a4a;
+      color: #8888aa;
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .filter-tag .remove {
+      cursor: pointer;
+      color: #ff5252;
+      font-weight: 700;
+      font-size: 13px;
+    }
+    .filter-tag .remove:hover { color: #ff8a80; }
+
     /* Sort controls */
+    .controls-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
     .sort-bar {
       display: flex;
       align-items: center;
       gap: 8px;
-      margin-bottom: 12px;
       font-size: 13px;
       color: #6666aa;
     }
@@ -97,6 +200,77 @@ export function getDashboardHtml(): string {
     .sort-btn:hover { border-color: #00d4ff; color: #ccc; }
     .sort-btn.active { background: #00d4ff22; border-color: #00d4ff; color: #00d4ff; }
     .sort-btn .arrow { font-size: 10px; margin-left: 3px; }
+
+    /* Selection & copy */
+    .selection-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .select-all-wrap {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 12px;
+      color: #6666aa;
+      cursor: pointer;
+    }
+    .copy-btn {
+      background: #1e1e3a;
+      border: 1px solid #2a2a4a;
+      color: #8888aa;
+      padding: 5px 14px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .copy-btn:hover { border-color: #00d4ff; color: #00d4ff; }
+    .copy-btn:disabled { opacity: 0.3; cursor: default; }
+    .copy-btn.copied { border-color: #00e676; color: #00e676; }
+    .token-checkbox {
+      width: 16px;
+      height: 16px;
+      accent-color: #00d4ff;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .token-card-selectable {
+      grid-template-columns: 30px 1fr 130px 100px 120px 140px 140px;
+    }
+    .copy-single {
+      background: none;
+      border: 1px solid #2a2a4a;
+      color: #555577;
+      padding: 3px 8px;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 11px;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+    .copy-single:hover { border-color: #00d4ff; color: #00d4ff; }
+    .copy-single.copied { border-color: #00e676; color: #00e676; }
+    .toast {
+      position: fixed;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #1e1e3a;
+      border: 1px solid #00e676;
+      color: #00e676;
+      padding: 10px 24px;
+      border-radius: 8px;
+      font-size: 13px;
+      z-index: 1000;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+    }
+    .toast.show { opacity: 1; }
 
     /* Token list */
     .token-list { margin-top: 10px; }
@@ -220,12 +394,51 @@ export function getDashboardHtml(): string {
 
     <!-- List View -->
     <div class="list-view" id="listView">
-      <div class="sort-bar" id="sortBar"></div>
+      <!-- Filter Bar -->
+      <div class="filter-bar" id="filterBar">
+        <div class="filter-row">
+          <input type="text" class="filter-search" id="filterSearch" placeholder="Search name, symbol, or mint..." />
+          <div class="filter-group">
+            <label>Price:</label>
+            <input type="text" class="filter-input" id="filterMinPrice" placeholder="Min" />
+            <span style="color:#555577">-</span>
+            <input type="text" class="filter-input" id="filterMaxPrice" placeholder="Max" />
+          </div>
+          <div class="filter-group">
+            <label>Change%:</label>
+            <input type="text" class="filter-input" id="filterMinChange" placeholder="Min" />
+            <span style="color:#555577">-</span>
+            <input type="text" class="filter-input" id="filterMaxChange" placeholder="Max" />
+          </div>
+          <div class="filter-group">
+            <label>MCap:</label>
+            <input type="text" class="filter-input" id="filterMinMcap" placeholder="Min" />
+            <span style="color:#555577">-</span>
+            <input type="text" class="filter-input" id="filterMaxMcap" placeholder="Max" />
+          </div>
+          <button class="filter-apply" onclick="applyFilters()">Apply</button>
+          <button class="filter-clear" onclick="clearFilters()">Clear</button>
+        </div>
+        <div class="active-filters" id="activeFilters"></div>
+      </div>
+
+      <div class="controls-bar">
+        <div class="sort-bar" id="sortBar"></div>
+        <div class="selection-bar">
+          <label class="select-all-wrap">
+            <input type="checkbox" class="token-checkbox" id="selectAll" onchange="toggleSelectAll(this.checked)" />
+            Select all
+          </label>
+          <button class="copy-btn" id="copySelectedBtn" onclick="copySelected()" disabled>Copy Selected (0)</button>
+        </div>
+      </div>
       <div class="token-list" id="tokenList">
         <div class="loading">Loading tokens...</div>
       </div>
       <div class="pagination" id="pagination"></div>
     </div>
+
+    <div class="toast" id="toast"></div>
 
     <!-- Detail View -->
     <div class="detail-view" id="detailView">
@@ -240,6 +453,12 @@ export function getDashboardHtml(): string {
     let charts = [];
     let currentSort = 'analysis_ended';
     let currentOrder = 'desc';
+
+    // Filter state
+    let activeFilterState = {};
+    // Selection state
+    let selectedTokens = {};  // mint -> token data
+    let currentTokenData = []; // current page token list
 
     async function fetchJson(url) {
       const res = await fetch(url);
@@ -304,6 +523,194 @@ export function getDashboardHtml(): string {
       const pct = ((last - first) / first) * 100;
       const sign = pct >= 0 ? '+' : '';
       return sign + pct.toFixed(1) + '%';
+    }
+
+    // --- Filter functions ---
+    function applyFilters() {
+      var f = {};
+      var search = document.getElementById('filterSearch').value.trim();
+      var minPrice = document.getElementById('filterMinPrice').value.trim();
+      var maxPrice = document.getElementById('filterMaxPrice').value.trim();
+      var minChange = document.getElementById('filterMinChange').value.trim();
+      var maxChange = document.getElementById('filterMaxChange').value.trim();
+      var minMcap = document.getElementById('filterMinMcap').value.trim();
+      var maxMcap = document.getElementById('filterMaxMcap').value.trim();
+
+      if (search) f.search = search;
+      if (minPrice) f.min_price = minPrice;
+      if (maxPrice) f.max_price = maxPrice;
+      if (minChange) f.min_change = minChange;
+      if (maxChange) f.max_change = maxChange;
+      if (minMcap) f.min_mcap = minMcap;
+      if (maxMcap) f.max_mcap = maxMcap;
+
+      activeFilterState = f;
+      renderFilterTags();
+      loadTokens(1);
+    }
+
+    function clearFilters() {
+      activeFilterState = {};
+      document.getElementById('filterSearch').value = '';
+      document.getElementById('filterMinPrice').value = '';
+      document.getElementById('filterMaxPrice').value = '';
+      document.getElementById('filterMinChange').value = '';
+      document.getElementById('filterMaxChange').value = '';
+      document.getElementById('filterMinMcap').value = '';
+      document.getElementById('filterMaxMcap').value = '';
+      renderFilterTags();
+      loadTokens(1);
+    }
+
+    function removeFilter(key) {
+      delete activeFilterState[key];
+      // Clear corresponding input
+      var inputMap = {
+        search: 'filterSearch', min_price: 'filterMinPrice', max_price: 'filterMaxPrice',
+        min_change: 'filterMinChange', max_change: 'filterMaxChange',
+        min_mcap: 'filterMinMcap', max_mcap: 'filterMaxMcap',
+      };
+      if (inputMap[key]) document.getElementById(inputMap[key]).value = '';
+      renderFilterTags();
+      loadTokens(1);
+    }
+
+    function renderFilterTags() {
+      var el = document.getElementById('activeFilters');
+      var labels = {
+        search: 'Search', min_price: 'Min Price', max_price: 'Max Price',
+        min_change: 'Min Change%', max_change: 'Max Change%',
+        min_mcap: 'Min MCap', max_mcap: 'Max MCap',
+      };
+      var keys = Object.keys(activeFilterState);
+      if (keys.length === 0) { el.innerHTML = ''; return; }
+      el.innerHTML = keys.map(function(k) {
+        return '<span class="filter-tag">' + (labels[k] || k) + ': ' + esc(activeFilterState[k]) + ' <span class="remove" onclick="removeFilter(\\'' + k + '\\')">&times;</span></span>';
+      }).join('');
+    }
+
+    function buildFilterQuery() {
+      var params = [];
+      Object.keys(activeFilterState).forEach(function(k) {
+        params.push(encodeURIComponent(k) + '=' + encodeURIComponent(activeFilterState[k]));
+      });
+      return params.length > 0 ? '&' + params.join('&') : '';
+    }
+
+    // Allow Enter key to apply filters
+    document.addEventListener('DOMContentLoaded', function() {
+      var inputs = document.querySelectorAll('.filter-search, .filter-input');
+      inputs.forEach(function(input) {
+        input.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter') applyFilters();
+        });
+      });
+    });
+
+    // --- Selection & copy functions ---
+    function toggleSelectAll(checked) {
+      currentTokenData.forEach(function(t) {
+        if (checked) {
+          selectedTokens[t.mint] = t;
+        } else {
+          delete selectedTokens[t.mint];
+        }
+      });
+      updateCheckboxes();
+      updateCopyBtn();
+    }
+
+    function toggleTokenSelect(mint, checked) {
+      if (checked) {
+        var t = currentTokenData.find(function(t) { return t.mint === mint; });
+        if (t) selectedTokens[mint] = t;
+      } else {
+        delete selectedTokens[mint];
+      }
+      // Update select-all checkbox state
+      var allChecked = currentTokenData.length > 0 && currentTokenData.every(function(t) { return selectedTokens[t.mint]; });
+      document.getElementById('selectAll').checked = allChecked;
+      updateCopyBtn();
+    }
+
+    function updateCheckboxes() {
+      currentTokenData.forEach(function(t) {
+        var cb = document.getElementById('cb_' + t.mint);
+        if (cb) cb.checked = !!selectedTokens[t.mint];
+      });
+    }
+
+    function updateCopyBtn() {
+      var count = Object.keys(selectedTokens).length;
+      var btn = document.getElementById('copySelectedBtn');
+      btn.textContent = 'Copy Selected (' + count + ')';
+      btn.disabled = count === 0;
+      btn.classList.remove('copied');
+    }
+
+    function formatTokenForCopy(t) {
+      var lines = [];
+      lines.push('Name: ' + (t.name || 'Unknown') + (t.symbol ? ' (' + t.symbol + ')' : ''));
+      lines.push('Mint: ' + t.mint);
+      lines.push('Creator: ' + (t.creator || '-'));
+      lines.push('Price: ' + (t.last_price != null ? t.last_price : '-'));
+      lines.push('Change: ' + (t.change_pct != null ? (t.change_pct >= 0 ? '+' : '') + t.change_pct.toFixed(1) + '%' : '-'));
+      lines.push('Market Cap: ' + (t.last_market_cap != null ? t.last_market_cap.toFixed(4) + ' SOL' : '-'));
+      lines.push('Max Price: ' + (t.max_price != null ? t.max_price : '-'));
+      lines.push('Snapshots: ' + (t.snapshot_count || 0));
+      lines.push('Created: ' + (t.created_at ? new Date(t.created_at < 1e12 ? t.created_at * 1000 : t.created_at).toISOString() : '-'));
+      return lines.join('\\n');
+    }
+
+    function copySelected() {
+      var tokens = Object.values(selectedTokens);
+      if (tokens.length === 0) return;
+      var text = tokens.map(function(t, i) {
+        return (tokens.length > 1 ? '--- Token ' + (i + 1) + ' ---\\n' : '') + formatTokenForCopy(t);
+      }).join('\\n\\n');
+      copyToClipboard(text, document.getElementById('copySelectedBtn'));
+    }
+
+    function copySingleToken(mint, event) {
+      event.stopPropagation();
+      var t = currentTokenData.find(function(t) { return t.mint === mint; });
+      if (!t) return;
+      var text = formatTokenForCopy(t);
+      var btn = event.target;
+      copyToClipboard(text, btn);
+    }
+
+    function copyToClipboard(text, btn) {
+      navigator.clipboard.writeText(text).then(function() {
+        if (btn) {
+          btn.classList.add('copied');
+          var orig = btn.textContent;
+          btn.textContent = 'Copied!';
+          setTimeout(function() {
+            btn.classList.remove('copied');
+            btn.textContent = orig;
+          }, 1500);
+        }
+        showToast('Copied to clipboard');
+      }).catch(function() {
+        // Fallback for non-secure contexts
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        showToast('Copied to clipboard');
+      });
+    }
+
+    function showToast(msg) {
+      var toast = document.getElementById('toast');
+      toast.textContent = msg;
+      toast.classList.add('show');
+      setTimeout(function() { toast.classList.remove('show'); }, 2000);
     }
 
     async function loadStats() {
@@ -390,17 +797,24 @@ export function getDashboardHtml(): string {
       renderSortBar();
 
       try {
-        const data = await fetchJson('/api/tokens?page=' + page + '&limit=' + pageSize + '&sort=' + currentSort + '&order=' + currentOrder);
+        const data = await fetchJson('/api/tokens?page=' + page + '&limit=' + pageSize + '&sort=' + currentSort + '&order=' + currentOrder + buildFilterQuery());
+        currentTokenData = data.tokens;
+
         if (data.tokens.length === 0) {
-          el.innerHTML = '<div class="empty-state"><h3>No tokens tracked yet</h3><p>Start the collector to begin tracking tokens.</p></div>';
+          var msg = Object.keys(activeFilterState).length > 0
+            ? '<div class="empty-state"><h3>No tokens match filters</h3><p>Try adjusting or clearing your filters.</p></div>'
+            : '<div class="empty-state"><h3>No tokens tracked yet</h3><p>Start the collector to begin tracking tokens.</p></div>';
+          el.innerHTML = msg;
           document.getElementById('pagination').innerHTML = '';
           return;
         }
 
         el.innerHTML = data.tokens.map(function(t) {
           const cls = priceChangeClass(t.first_price, t.last_price);
-          return '<div class="token-card" onclick="showDetail(\\'' + t.mint + '\\', \\'' + t.run_id + '\\')">' +
-            '<div>' +
+          var isChecked = selectedTokens[t.mint] ? 'checked' : '';
+          return '<div class="token-card token-card-selectable">' +
+            '<div style="display:flex;align-items:center"><input type="checkbox" class="token-checkbox" id="cb_' + t.mint + '" ' + isChecked + ' onchange="toggleTokenSelect(\\'' + t.mint + '\\', this.checked)" /></div>' +
+            '<div onclick="showDetail(\\'' + t.mint + '\\', \\'' + t.run_id + '\\')" style="cursor:pointer">' +
               '<span class="token-name">' + esc(t.name || 'Unknown') + '</span>' +
               '<span class="token-symbol">' + esc(t.symbol || '') + '</span>' +
               '<div class="token-mint">' + t.mint.slice(0, 8) + '...' + t.mint.slice(-6) + '</div>' +
@@ -409,9 +823,14 @@ export function getDashboardHtml(): string {
             '<div class="token-metric"><div class="label">Change</div><div class="value ' + cls + '">' + priceChangePct(t.first_price, t.last_price) + '</div></div>' +
             '<div class="token-metric"><div class="label">Mkt Cap</div><div class="value">' + formatMarketCap(t.last_market_cap) + '</div></div>' +
             '<div class="token-metric"><div class="label">Created</div><div class="value" style="font-size:12px">' + formatTime(t.created_at) + '</div></div>' +
-            '<div class="token-metric"><div class="label">Analysis Ended</div><div class="value" style="font-size:12px">' + formatTime(t.analysis_ended_at || t.last_snapshot_at) + '</div></div>' +
+            '<div class="token-metric" style="display:flex;flex-direction:column;align-items:flex-end;gap:4px"><div class="label">Analysis Ended</div><div class="value" style="font-size:12px">' + formatTime(t.analysis_ended_at || t.last_snapshot_at) + '</div><button class="copy-single" onclick="copySingleToken(\\'' + t.mint + '\\', event)">Copy</button></div>' +
           '</div>';
         }).join('');
+
+        // Sync select-all checkbox
+        var allChecked = currentTokenData.length > 0 && currentTokenData.every(function(t) { return selectedTokens[t.mint]; });
+        document.getElementById('selectAll').checked = allChecked;
+        updateCopyBtn();
 
         // Pagination
         const p = data.pagination;
