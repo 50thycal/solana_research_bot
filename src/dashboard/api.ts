@@ -8,6 +8,7 @@ import {
   buildScoringModel,
   scoreToken,
   backtestModel,
+  type TimeRange,
 } from '../analysis';
 
 function jsonResponse(res: http.ServerResponse, data: unknown, status = 200): void {
@@ -248,6 +249,29 @@ function getStats(db: Database.Database, res: http.ServerResponse): void {
 
 // ─── Analysis Endpoints ───
 
+/** Parse optional start/end time range from query params (Unix seconds or ISO string) */
+function parseTimeRange(url: URL): TimeRange | undefined {
+  const startStr = url.searchParams.get('start');
+  const endStr = url.searchParams.get('end');
+  if (!startStr && !endStr) return undefined;
+
+  const parseTs = (s: string | null): number | undefined => {
+    if (!s) return undefined;
+    const n = Number(s);
+    // If it's a valid number, treat as Unix seconds
+    if (!isNaN(n) && n > 0) return n;
+    // Otherwise try ISO date parse (returns ms)
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) return Math.floor(d.getTime() / 1000);
+    return undefined;
+  };
+
+  const startTime = parseTs(startStr);
+  const endTime = parseTs(endStr);
+  if (!startTime && !endTime) return undefined;
+  return { startTime, endTime };
+}
+
 /**
  * GET /api/analysis/correlations?checkpoint=30&full=true
  * Returns feature correlations with hit_2x outcome.
@@ -255,8 +279,9 @@ function getStats(db: Database.Database, res: http.ServerResponse): void {
 function getCorrelations(db: Database.Database, url: URL, res: http.ServerResponse): void {
   const checkpoint = parseInt(url.searchParams.get('checkpoint') ?? '30', 10);
   const full = url.searchParams.get('full') === 'true';
+  const timeRange = parseTimeRange(url);
 
-  const dataset = full ? buildFullDataset(db, checkpoint) : buildLabeledDataset(db, checkpoint);
+  const dataset = full ? buildFullDataset(db, checkpoint, timeRange) : buildLabeledDataset(db, checkpoint, timeRange);
 
   if (dataset.length < 5) {
     return jsonResponse(res, {
@@ -284,8 +309,9 @@ function getCorrelations(db: Database.Database, url: URL, res: http.ServerRespon
 function getBacktest(db: Database.Database, url: URL, res: http.ServerResponse): void {
   const checkpoint = parseInt(url.searchParams.get('checkpoint') ?? '30', 10);
   const full = url.searchParams.get('full') === 'true';
+  const timeRange = parseTimeRange(url);
 
-  const dataset = full ? buildFullDataset(db, checkpoint) : buildLabeledDataset(db, checkpoint);
+  const dataset = full ? buildFullDataset(db, checkpoint, timeRange) : buildLabeledDataset(db, checkpoint, timeRange);
 
   if (dataset.length < 5) {
     return jsonResponse(res, {
@@ -316,7 +342,8 @@ function getScore(db: Database.Database, url: URL, res: http.ServerResponse): vo
   const checkpoint = parseInt(url.searchParams.get('checkpoint') ?? '30', 10);
 
   // Build model from historical data
-  const dataset = buildFullDataset(db, checkpoint);
+  const timeRange = parseTimeRange(url);
+  const dataset = buildFullDataset(db, checkpoint, timeRange);
   if (dataset.length < 5) {
     return jsonResponse(res, {
       error: 'Insufficient training data',
@@ -355,8 +382,9 @@ function getScore(db: Database.Database, url: URL, res: http.ServerResponse): vo
 function getModel(db: Database.Database, url: URL, res: http.ServerResponse): void {
   const checkpoint = parseInt(url.searchParams.get('checkpoint') ?? '30', 10);
   const full = url.searchParams.get('full') === 'true';
+  const timeRange = parseTimeRange(url);
 
-  const dataset = full ? buildFullDataset(db, checkpoint) : buildLabeledDataset(db, checkpoint);
+  const dataset = full ? buildFullDataset(db, checkpoint, timeRange) : buildLabeledDataset(db, checkpoint, timeRange);
 
   if (dataset.length < 5) {
     return jsonResponse(res, {
