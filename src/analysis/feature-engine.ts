@@ -28,7 +28,7 @@ export interface TokenFeatureVector {
   priceAcceleration: number; // price change rate of change
   buyAcceleration: number;  // buy velocity change over window
   txBurst: number;          // max tx_count_delta in window
-  holderConcentration: number; // unique_buyers / buy_count (lower = more concentrated)
+  holderConcentration: number; // unique_sellers / sell_count — seller concentration (0 = no sells, lower = concentrated selling)
 }
 
 /** A token with features + outcome label */
@@ -168,8 +168,8 @@ export function extractFeatureVectors(
         : 0,
       buyAcceleration: (row.buy_velocity ?? 0) - prevBuyVelocity,
       txBurst: burstMap.get(row.mint) ?? 0,
-      holderConcentration: (row.buy_count ?? 0) > 0
-        ? (row.unique_buyers ?? 0) / (row.buy_count ?? 0)
+      holderConcentration: (row.sell_count ?? 0) > 0
+        ? (row.unique_sellers ?? 0) / (row.sell_count ?? 0)
         : 0,
     };
   });
