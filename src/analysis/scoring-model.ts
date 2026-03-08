@@ -20,6 +20,8 @@ export interface ScoringRule {
 
 /** Complete scoring model */
 export interface ScoringModel {
+  /** Schema version for validation by consumers (trading bot) */
+  schemaVersion: number;
   checkpointSeconds: number;
   rules: ScoringRule[];
   /** Trained on N samples */
@@ -99,6 +101,7 @@ export function buildScoringModel(
   const hit2xCount = dataset.filter(d => d.outcome.hitTwoX).length;
 
   return {
+    schemaVersion: 1,
     checkpointSeconds,
     rules,
     sampleCount: dataset.length,

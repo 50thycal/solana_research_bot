@@ -94,7 +94,7 @@ interface TokenFeatureVector {
   priceAcceleration: number;
   buyAcceleration: number;
   txBurst: number;
-  holderConcentration: number;
+  holderConcentration: number; // unique_sellers / sell_count (seller concentration, NOT same as buyerTxRatio)
 }
 ```
 
@@ -112,6 +112,7 @@ interface ScoringRule {
 }
 
 interface ScoringModel {
+  schemaVersion: number;     // currently 1 — validate this on fetch
   checkpointSeconds: number; // e.g. 30
   rules: ScoringRule[];
   sampleCount: number;       // how many tokens the model was trained on
@@ -196,7 +197,7 @@ function buildFeatureVector(ctx: PipelineContext): TokenFeatureVector {
     priceAcceleration: 0,      // Would need two price reads — set to 0
     buyAcceleration,
     txBurst,
-    holderConcentration: buyCount > 0 ? uniqueBuyers / buyCount : 0,
+    holderConcentration: sellCount > 0 ? uniqueSellers / sellCount : 0,
   };
 }
 ```
@@ -307,18 +308,25 @@ export interface ResearchScoreGateData {
 
 The stage class should:
 1. On construction: fetch model from `GET {researchBotUrl}/api/analysis/model?checkpoint={checkpoint}&full=true`
-2. Cache the model in memory
-3. Set up a refresh interval to re-fetch periodically
-4. On `execute(ctx)`:
+2. **Validate the model** before caching:
+   - Check `data.schemaVersion === 1`
+   - Verify each rule in `data.rules` has: `featureName` (string), `weight` (number),
+     `direction` ('above'|'below'), `min` (number), `max` (number)
+   - If validation fails, log a warning and keep the previous cached model
+3. Cache the model in memory
+4. Set up a refresh interval to re-fetch periodically
+5. On `execute(ctx)`:
    - Build `TokenFeatureVector` from pipeline context (see Step 2c)
    - Run `scoreToken(model, features)` (see Step 2e)
    - If `score >= scoreThreshold` → PASS
    - If `score < scoreThreshold` → REJECT (unless `logOnly: true`)
    - Always attach `ResearchScoreGateData` to the stage result
-5. On model fetch failure: log a warning and use the cached model.
+6. On model fetch failure: log a warning and use the cached model.
    If no model has ever been fetched, PASS the token (graceful degradation)
    and log a warning. This prevents the gate from blocking all trades if the
-   research bot is down.
+   research bot is down. **Track a `noModelPassCount` stat** so this is visible
+   on the dashboard.
+7. On `destroy()`: clear the refresh interval timer
 
 ---
 
