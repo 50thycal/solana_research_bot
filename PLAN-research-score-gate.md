@@ -3,6 +3,10 @@
 > This plan is for the `solana-trading-bot` repo. It describes how to integrate
 > the research bot's scoring model into the trading bot's pipeline as a new gate
 > that replaces the momentum gate.
+>
+> **Updated** with corrections from trading bot codebase review — correct field
+> names, BN type handling, checkHistory-based momentum derivation, and full
+> cleanup list.
 
 ---
 
@@ -23,25 +27,33 @@ Cheap Gates → Deep Filters → Sniper Gate → Research Score Gate → Execute
 
 The momentum gate is completely removed.
 
+**Key endpoint:** `GET {RESEARCH_BOT_URL}/api/analysis/model?checkpoint={checkpoint}&full=true`
+— returns the ScoringModel with rules that the trading bot applies locally.
+
 ---
 
 ## Step 1: Remove Momentum Gate
 
-### Files to modify:
-- `pipeline/index.ts` — Remove `export * from './momentum-gate'`
-- `pipeline/pipeline.ts` — Remove momentum gate import, remove the momentum gate
-  stage from the constructor, remove the conditional that chooses between sniper
-  gate and momentum gate (always use sniper gate, then research score gate)
-- `pipeline/types.ts` — Remove `MomentumGateData` interface and
-  `RejectionReasons.MOMENTUM_*` constants if they exist
-
 ### File to delete:
 - `pipeline/momentum-gate.ts`
 
-### Env vars to remove:
-- Any `MOMENTUM_*` env vars from config. The `SNIPER_GATE_ENABLED` toggle that
-  fell back to momentum gate should be removed or repurposed — sniper gate is
-  now always on.
+### Files to modify:
+
+| File | Changes |
+|------|---------|
+| `pipeline/index.ts` | Remove `export * from './momentum-gate'` |
+| `pipeline/pipeline.ts` | Remove momentum gate import, `MomentumGateStage` member, momentum gate from constructor, and the `else` branch in Stage 4 (sniper gate always runs). Remove momentum gate from `PipelineConfig`. |
+| `pipeline/types.ts` | Remove `MomentumGateData` interface, remove `momentumGate?` from `PipelineContext`, remove `MOMENTUM_*` rejection reason constants |
+| `helpers/config-validator.ts` | Remove `momentumGate*` fields from `ValidatedConfig` interface (lines ~83-88). Remove `MOMENTUM_*` env var parsing (lines ~404-429). Remove the sniper/momentum conflict warning (lines ~546-549). Remove momentum config from the returned config object. |
+| `index.ts` | Remove `momentumGate:` block from `initPipeline()` call (lines ~486-492) |
+| `smoke-test.ts` | Remove `momentumGate:` block from `initPipeline()` call |
+| `pipeline/pipeline-stats.ts` | Remove `MOMENTUM_GATE` constant, `momentumGateStats` Map, `recordMomentumGateRejection` function, momentum references in `recordAllGatesPassed` and `recordRejection`, `momentumGate` from `PipelineStatsSnapshot.gateStats` |
+
+### Config changes:
+- Remove all `MOMENTUM_*` env vars from config
+- Change `SNIPER_GATE_ENABLED` default from `false` to `true` — sniper gate
+  is now always on (the env var can remain for emergency disable but should
+  default to enabled)
 
 ---
 
@@ -112,11 +124,25 @@ interface ScoringModel {
 The trading bot already has all the raw data at the point the research score
 gate runs. Here's exactly where each feature comes from:
 
+**IMPORTANT: BondingCurveState fields are BN (Big Number) types from
+@solana/web3.js, NOT plain numbers.** You MUST call `.toNumber()` or use BN
+math when computing features. Lamport values need division by `LAMPORTS_PER_SOL`
+(1e9) to convert to SOL.
+
+**IMPORTANT: SniperGateData field names** — use the correct names from the
+actual interface:
+- `organicBuyerCount` (NOT `organicCount`)
+- `sniperWalletCount` (NOT `botCount`)
+- `sniperExitCount` (NOT `botExitCount`)
+
 ```typescript
+import { LAMPORTS_PER_SOL } from '@solana/web3.js';
+
 // Available from prior pipeline stages:
 // - ctx.detection: DetectionEvent (mint, bondingCurve, slot, detectedAt)
-// - ctx.deepFilters.bondingCurveState: BondingCurveState
-// - ctx.sniperGate: SniperGateData (botCount, organicCount, wallets, etc.)
+// - ctx.deepFilters.bondingCurveState: BondingCurveState (fields are BN!)
+// - ctx.sniperGate: SniperGateData (organicBuyerCount, sniperWalletCount, etc.)
+// - ctx.sniperGate.checkHistory: array of per-poll snapshots
 
 function buildFeatureVector(ctx: PipelineContext): TokenFeatureVector {
   const bcs = ctx.deepFilters.bondingCurveState;
@@ -127,35 +153,37 @@ function buildFeatureVector(ctx: PipelineContext): TokenFeatureVector {
   const secondsSinceCreation = (Date.now() - detection.detectedAt) / 1000;
 
   // Price from bonding curve: virtualSolReserves / virtualTokenReserves
-  const priceSol = bcs.virtualSolReserves / bcs.virtualTokenReserves;
+  // NOTE: Both are BN types — convert to number for division
+  const virtualSolLamports = bcs.virtualSolReserves.toNumber();
+  const virtualTokens = bcs.virtualTokenReserves.toNumber();
+  const priceSol = virtualSolLamports / virtualTokens;
 
-  // Initial price: use the price at detection time
-  // (the deep filters fetch bonding curve state early, so this IS the initial price)
-  const initialPrice = priceSol; // See note below
+  // Real SOL reserves in SOL (not lamports)
+  const realSolReserves = bcs.realSolReserves.toNumber() / LAMPORTS_PER_SOL;
 
-  // Transaction data from sniper gate
-  // Sniper gate fetches signatures and classifies wallets.
-  // buyCount = organicCount + botCount (total buy wallets)
-  // sellCount = number of bot exits (sells detected)
-  const buyCount = (sniper.organicCount || 0) + (sniper.botCount || 0);
-  const sellCount = sniper.botExitCount || 0; // bots that sold
-  const totalTxCount = sniper.totalSignatures || buyCount + sellCount;
-  const uniqueBuyers = sniper.organicCount || 0; // distinct organic wallets
-  const uniqueSellers = sniper.botExitCount || 0;
+  // Transaction data from sniper gate (correct field names!)
+  const buyCount = (sniper.organicBuyerCount || 0) + (sniper.sniperWalletCount || 0);
+  const sellCount = sniper.sniperExitCount || 0;
+  const totalTxCount = buyCount + sellCount;
+  const uniqueBuyers = sniper.organicBuyerCount || 0;
+  const uniqueSellers = sniper.sniperExitCount || 0;
 
   // Derived features
   const buyVelocity = secondsSinceCreation > 0 ? buyCount / secondsSinceCreation : 0;
-  const sellRatio = (buyCount + sellCount) > 0
-    ? sellCount / (buyCount + sellCount) : 0;
+  const sellRatio = totalTxCount > 0 ? sellCount / totalTxCount : 0;
   const buyerTxRatio = buyCount > 0 ? uniqueBuyers / buyCount : 0;
-  const marketCapSol = priceSol * (bcs.virtualTokenReserves + bcs.realTokenReserves);
+  const realTokens = bcs.realTokenReserves.toNumber();
+  const marketCapSol = priceSol * (virtualTokens + realTokens);
+
+  // Momentum features derived from checkHistory (see Step 2d)
+  const { buyAcceleration, txBurst } = deriveMomentumFromCheckHistory(sniper.checkHistory);
 
   return {
     mint: detection.mint.toBase58(),
     checkpointSeconds: secondsSinceCreation,
     priceSol,
     priceChangeFromInitial: 0, // See note below
-    realSolReserves: bcs.realSolReserves,
+    realSolReserves,
     totalTxCount,
     buyCount,
     sellCount,
@@ -165,12 +193,9 @@ function buildFeatureVector(ctx: PipelineContext): TokenFeatureVector {
     sellRatio,
     buyerTxRatio,
     marketCapSol,
-
-    // Momentum features — these require a second bonding curve fetch
-    // to measure change over time. See Step 2d for implementation.
-    priceAcceleration: 0,
-    buyAcceleration: 0,
-    txBurst: 0,
+    priceAcceleration: 0,      // Would need two price reads — set to 0
+    buyAcceleration,
+    txBurst,
     holderConcentration: buyCount > 0 ? uniqueBuyers / buyCount : 0,
   };
 }
@@ -180,39 +205,51 @@ function buildFeatureVector(ctx: PipelineContext): TokenFeatureVector {
 - `priceChangeFromInitial`: In the research bot this compares price at checkpoint
   vs initial. In the trading bot, the deep filters fetch the bonding curve ONCE,
   so we only have one price point. Set this to 0 unless you add a second fetch.
-- `priceAcceleration` and `buyAcceleration`: These require comparing two points
-  in time. The sniper gate already polls multiple times — you can capture the
-  first and last poll data to compute these. See Step 2d.
-- `txBurst`: This is max transactions in any single interval. The sniper gate
-  fetches signatures on each poll — you can track the max delta between polls.
+- `priceAcceleration`: Would require two price reads at different times. Set to 0.
+- `buyAcceleration` and `txBurst`: Derived from `checkHistory` — see Step 2d.
 
-#### 2d. Enhanced Sniper Gate Data (optional but recommended)
+#### 2d. Deriving Momentum Features from checkHistory (NO sniper gate changes needed)
 
-To compute momentum features, modify the sniper gate to also capture:
+The `checkHistory` array on `SniperGateData` already contains per-poll snapshots
+with `totalBuys`, `organicCount`, and `checkedAt` fields. Use these to compute
+momentum features WITHOUT modifying the sniper gate at all:
 
 ```typescript
-// Add to SniperGateData interface in types.ts:
-interface SniperGateData {
-  // ... existing fields ...
+interface CheckHistoryEntry {
+  totalBuys: number;
+  organicCount: number;
+  checkedAt: number; // ms timestamp
+}
 
-  // New fields for research score gate
-  totalSignatures: number;       // total tx signatures seen
-  botExitCount: number;          // number of bots that exited
-  firstPollBuyCount: number;     // buys at first poll
-  lastPollBuyCount: number;      // buys at last poll
-  firstPollTimestamp: number;    // ms timestamp of first poll
-  lastPollTimestamp: number;     // ms timestamp of last poll
-  maxTxDelta: number;            // max new txs between consecutive polls
+function deriveMomentumFromCheckHistory(
+  checkHistory: CheckHistoryEntry[] | undefined
+): { buyAcceleration: number; txBurst: number } {
+  if (!checkHistory || checkHistory.length < 2) {
+    return { buyAcceleration: 0, txBurst: 0 };
+  }
+
+  const first = checkHistory[0];
+  const last = checkHistory[checkHistory.length - 1];
+
+  // buyAcceleration: change in buy rate between first and last poll
+  const timeDeltaSec = (last.checkedAt - first.checkedAt) / 1000;
+  const buyAcceleration = timeDeltaSec > 0
+    ? (last.totalBuys - first.totalBuys) / timeDeltaSec
+    : 0;
+
+  // txBurst: max new buys between any two consecutive polls
+  let maxDelta = 0;
+  for (let i = 1; i < checkHistory.length; i++) {
+    const delta = checkHistory[i].totalBuys - checkHistory[i - 1].totalBuys;
+    if (delta > maxDelta) maxDelta = delta;
+  }
+
+  return { buyAcceleration, txBurst: maxDelta };
 }
 ```
 
-This lets the research score gate compute:
-```typescript
-priceAcceleration = 0; // Still hard without two price reads
-buyAcceleration = (lastPollBuyCount - firstPollBuyCount) /
-                  ((lastPollTimestamp - firstPollTimestamp) / 1000);
-txBurst = maxTxDelta;
-```
+This approach keeps the change fully isolated to the research score gate —
+no modifications to the sniper gate are needed.
 
 #### 2e. The Scoring Function
 
@@ -279,8 +316,9 @@ The stage class should:
    - If `score < scoreThreshold` → REJECT (unless `logOnly: true`)
    - Always attach `ResearchScoreGateData` to the stage result
 5. On model fetch failure: log a warning and use the cached model.
-   If no model has ever been fetched, either always pass (graceful degradation)
-   or reject (strict mode) — configurable.
+   If no model has ever been fetched, PASS the token (graceful degradation)
+   and log a warning. This prevents the gate from blocking all trades if the
+   research bot is down.
 
 ---
 
@@ -349,6 +387,8 @@ Note: `RESEARCH_BOT_URL` may already exist for `market-context.ts`. Reuse it.
 
 ## Step 5: Logging & Dashboard Integration
 
+### Logging
+
 The research score gate should log:
 ```json
 {
@@ -365,19 +405,54 @@ The research score gate should log:
 }
 ```
 
-Add to the trading bot dashboard's trade journal / diagnostic views:
-- Show the research score alongside other pipeline stage data
-- Show which features contributed most to the score
+### Dashboard Updates
+
+Update the trading bot's dashboard to show research score gate data:
+
+1. **Pipeline view / recent tokens table** — Add a "Research Score" column showing
+   the 0-100 score with color coding (green ≥70, yellow ≥55, red <35)
+2. **Token detail view** — When clicking into a token, show:
+   - Overall research score and signal (strong_buy/buy/neutral/avoid)
+   - Feature breakdown table: feature name, raw value, normalized score, weight
+   - Which features contributed most (sorted by weighted score descending)
+3. **Stats/summary section** — Add research score gate stats:
+   - Pass/reject counts and rate
+   - Average score for all evaluated tokens vs tokens that passed all gates
+   - Score distribution histogram (0-20, 20-40, 40-60, 60-80, 80-100)
+4. **Model status indicator** — Show whether the scoring model is loaded,
+   when it was last fetched, sample count, and base hit rate
 
 ---
 
 ## Step 6: Pipeline Stats Integration
 
-Update `pipeline/pipeline-stats.ts` to track:
-- `researchScorePassCount` / `researchScoreRejectCount`
-- `avgResearchScore` (across all tokens evaluated)
-- `avgResearchScoreForBuys` (only tokens that passed all gates)
-- `researchScoreDistribution` (histogram buckets: 0-20, 20-40, 40-60, 60-80, 80-100)
+Update `pipeline/pipeline-stats.ts`:
+
+### New constants and tracking:
+- Add `RESEARCH_SCORE_GATE` constant
+- Add `researchScoreGateStats` Map (same pattern as other gate stats)
+- Add `'research-score-gate'` case to `recordRejection` method
+
+### Add to `PipelineStatsSnapshot.gateStats`:
+```typescript
+researchScoreGate: {
+  passCount: number;
+  rejectCount: number;
+  avgScore: number;
+  avgScoreForBuys: number;
+  scoreDistribution: { '0-20': number; '20-40': number; '40-60': number; '60-80': number; '80-100': number };
+}
+```
+
+### Add to `RecentToken`:
+```typescript
+researchScore?: number;
+researchSignal?: string;
+researchFeatureScores?: { name: string; score: number; raw: number }[];
+```
+
+### Update `recordAllGatesPassed`:
+- Include research score gate stats in the "all gates passed" path
 
 ---
 
@@ -415,22 +490,26 @@ data back to the research bot to improve the model:
 |--------|------|-------------|
 | DELETE | `pipeline/momentum-gate.ts` | Remove momentum gate entirely |
 | CREATE | `pipeline/research-score-gate.ts` | New scoring gate stage |
-| MODIFY | `pipeline/pipeline.ts` | Wire research score gate after sniper gate |
-| MODIFY | `pipeline/types.ts` | Add `ResearchScoreGateData`, remove `MomentumGateData` |
-| MODIFY | `pipeline/index.ts` | Update exports |
-| MODIFY | `pipeline/sniper-gate.ts` | Add extra fields to `SniperGateData` for momentum features |
-| MODIFY | config file | Add `RESEARCH_SCORE_*` env vars |
-| MODIFY | `pipeline/pipeline-stats.ts` | Track research score metrics |
+| MODIFY | `pipeline/pipeline.ts` | Wire research score gate after sniper gate, remove momentum gate |
+| MODIFY | `pipeline/types.ts` | Add `ResearchScoreGateData`, `TokenFeatureVector`, `ScoringRule`, `ScoringModel`. Remove `MomentumGateData`, `momentumGate?` from context, `MOMENTUM_*` rejections. Add `researchScore?` to context, `RESEARCH_SCORE_LOW` rejection |
+| MODIFY | `pipeline/index.ts` | Remove momentum-gate export, add research-score-gate export |
+| MODIFY | `pipeline/pipeline-stats.ts` | Remove all momentum gate tracking, add research score gate tracking |
+| MODIFY | `helpers/config-validator.ts` | Remove `MOMENTUM_*` config, add `RESEARCH_SCORE_*` config, change `SNIPER_GATE_ENABLED` default to `true` |
+| MODIFY | `index.ts` | Remove momentumGate config block, add researchScoreGate config block |
+| MODIFY | `smoke-test.ts` | Remove momentumGate config block, add researchScoreGate config block |
+| MODIFY | Dashboard files | Add research score display to pipeline view, token detail, and stats |
+
+**NOTE:** `pipeline/sniper-gate.ts` does NOT need modification. Momentum features
+are derived from the existing `checkHistory` array without changing the sniper gate.
 
 ---
 
 ## Implementation Order
 
-1. Remove momentum gate (Step 1) — clean break, get it compiling
-2. Add `ResearchScoreGateData` to types (Step 3, types part)
-3. Create `research-score-gate.ts` with model fetching + scoring (Step 2)
+1. Remove momentum gate from all files (Step 1) — clean break, get it compiling
+2. Add types: `ResearchScoreGateData`, `TokenFeatureVector`, `ScoringRule`, `ScoringModel` to `types.ts` (Step 2a, 2b + Step 3 types)
+3. Create `research-score-gate.ts` with model fetching, feature building, and scoring (Step 2)
 4. Wire into pipeline after sniper gate (Step 3, pipeline part)
-5. Add env vars and config (Step 4)
-6. Update sniper gate to emit extra data for momentum features (Step 2d)
-7. Add logging and stats (Steps 5-6)
-8. Test with `RESEARCH_SCORE_LOG_ONLY=true` first to validate scores without affecting trades
+5. Add env vars and config to config-validator.ts, index.ts, smoke-test.ts (Step 4)
+6. Add logging, pipeline stats, and dashboard updates (Steps 5-6)
+7. Test with `RESEARCH_SCORE_LOG_ONLY=true` first to validate scores without affecting trades
