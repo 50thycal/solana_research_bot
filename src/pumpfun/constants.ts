@@ -23,6 +23,11 @@ export const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey(
   'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL'
 );
 
+/** Token-2022 program (used by pump.fun CreateV2) */
+export const TOKEN_2022_PROGRAM_ID = new PublicKey(
+  'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'
+);
+
 /** Rent sysvar */
 export const RENT_PROGRAM_ID = new PublicKey(
   'SysvarRent111111111111111111111111111111111'
