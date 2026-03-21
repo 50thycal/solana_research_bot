@@ -115,14 +115,18 @@ async function trackTokenLifecycle(
 ): Promise<void> {
   console.log(JSON.stringify({ event: 'resolving_token', signature }));
 
-  // Retry up to 3 times with backoff — the tx may not be available immediately
+  // The WebSocket fires almost instantly, but the RPC getTransaction endpoint
+  // needs time to index the tx. Wait a bit before the first attempt, then retry
+  // with increasing backoff: 2s initial, then 2s, 3s, 4s between retries.
+  await sleep(2000);
+
   let event = null;
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  for (let attempt = 1; attempt <= 4; attempt++) {
     event = await rpc.fetchCreateTransaction(signature);
     if (event) break;
-    if (attempt < 3) {
+    if (attempt < 4) {
       console.log(JSON.stringify({ event: 'token_resolve_retry', signature, attempt }));
-      await sleep(attempt * 1000); // 1s, 2s backoff
+      await sleep((attempt + 1) * 1000); // 2s, 3s, 4s backoff
     }
   }
   if (!event) {
