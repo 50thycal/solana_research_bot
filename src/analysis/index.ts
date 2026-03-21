@@ -14,9 +14,11 @@ export {
   scoreToken,
   backtestModel,
   formatBacktestReport,
+  computeScoreTrajectory,
   type ScoringModel,
   type ScoringRule,
   type TokenScore,
+  type ScoreTrajectory,
   type BacktestResult,
   type BacktestReport,
 } from './scoring-model';

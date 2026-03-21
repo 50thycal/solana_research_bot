@@ -29,6 +29,10 @@ export interface TokenFeatureVector {
   buyAcceleration: number;  // buy velocity change over window
   txBurst: number;          // max tx_count_delta in window
   holderConcentration: number; // unique_sellers / sell_count — seller concentration (0 = no sells, lower = concentrated selling)
+
+  // Momentum freshness features
+  timeSincePeakVelocity: number; // seconds between peak buy_velocity and checkpoint — shorter = momentum is live
+  buyVelocityTrend: number;      // slope of buy_velocity across last 2-3 snapshots — positive = accelerating, negative = decelerating
 }
 
 /** A token with features + outcome label */
@@ -137,12 +141,56 @@ export function extractFeatureVectors(
 
   const burstMap = new Map(burstRows.map((r: any) => [r.mint, r.max_burst ?? 0]));
 
+  // For momentum freshness features, get all snapshots up to checkpoint for each token
+  const velocityRows = db.prepare(`
+    SELECT mint, buy_velocity, seconds_since_creation
+    FROM snapshots
+    WHERE seconds_since_creation <= ? AND seconds_since_creation >= 0
+      AND buy_velocity IS NOT NULL
+    ORDER BY mint, seconds_since_creation ASC
+  `).all(checkpointSeconds) as any[];
+
+  // Group by mint
+  const velocityByMint = new Map<string, { velocity: number; seconds: number }[]>();
+  for (const r of velocityRows) {
+    if (!velocityByMint.has(r.mint)) velocityByMint.set(r.mint, []);
+    velocityByMint.get(r.mint)!.push({ velocity: r.buy_velocity, seconds: r.seconds_since_creation });
+  }
+
   return rows.map((row: any) => {
     const prev = prevMap.get(row.mint);
     const initialPrice = row.initial_price_sol ?? row.price_sol ?? 0;
     const currentPrice = row.price_sol ?? 0;
     const prevPrice = prev?.price_sol ?? currentPrice;
     const prevBuyVelocity = prev?.buy_velocity ?? 0;
+
+    // Compute timeSincePeakVelocity and buyVelocityTrend
+    const velocityHistory = velocityByMint.get(row.mint) ?? [];
+    let timeSincePeakVelocity = checkpointSeconds; // default: peak was at start (worst case)
+    let buyVelocityTrend = 0;
+
+    if (velocityHistory.length > 0) {
+      // Find when peak velocity occurred
+      let peakIdx = 0;
+      for (let i = 1; i < velocityHistory.length; i++) {
+        if (velocityHistory[i].velocity > velocityHistory[peakIdx].velocity) {
+          peakIdx = i;
+        }
+      }
+      timeSincePeakVelocity = checkpointSeconds - velocityHistory[peakIdx].seconds;
+
+      // Compute velocity trend from last 2-3 snapshots leading up to checkpoint
+      const recent = velocityHistory.slice(-3);
+      if (recent.length >= 2) {
+        // Simple linear slope: (last - first) / time_span
+        const first = recent[0];
+        const last = recent[recent.length - 1];
+        const timeDiff = last.seconds - first.seconds;
+        buyVelocityTrend = timeDiff > 0
+          ? (last.velocity - first.velocity) / timeDiff
+          : 0;
+      }
+    }
 
     return {
       mint: row.mint,
@@ -171,6 +219,10 @@ export function extractFeatureVectors(
       holderConcentration: (row.sell_count ?? 0) > 0
         ? (row.unique_sellers ?? 0) / (row.sell_count ?? 0)
         : 0,
+
+      // Momentum freshness
+      timeSincePeakVelocity,
+      buyVelocityTrend,
     };
   });
 }
@@ -197,9 +249,28 @@ export function buildLabeledDataset(
     const f = featureMap.get(o.mint);
     if (!f) continue;
 
-    const maxGain = o.max_gain_pct ?? 0;
-    const finalGain = o.final_gain_pct ?? 0;
-    const maxDrawdown = o.max_drawdown_pct ?? 0;
+    // Recompute outcome relative to checkpoint price, not entry trigger price
+    // This way the model learns "will it 2x from where I'd buy at this checkpoint?"
+    const checkpointPrice = f.priceSol;
+    const snapshots = db.prepare(`
+      SELECT price_sol, seconds_since_creation
+      FROM snapshots WHERE mint = ? AND price_sol IS NOT NULL
+      ORDER BY seconds_since_creation ASC
+    `).all(o.mint) as any[];
+
+    const postCheckpointPrices = snapshots
+      .filter((s: any) => s.seconds_since_creation > checkpointSeconds)
+      .map((s: any) => s.price_sol);
+
+    if (postCheckpointPrices.length === 0 || checkpointPrice <= 0) continue;
+
+    const maxPrice = Math.max(...postCheckpointPrices);
+    const finalPrice = postCheckpointPrices[postCheckpointPrices.length - 1];
+    const minAfterCheckpoint = Math.min(...postCheckpointPrices);
+
+    const maxGain = ((maxPrice - checkpointPrice) / checkpointPrice) * 100;
+    const finalGain = ((finalPrice - checkpointPrice) / checkpointPrice) * 100;
+    const maxDrawdown = ((minAfterCheckpoint - checkpointPrice) / checkpointPrice) * 100;
     const maxPriceSeconds = o.max_price_seconds ?? 0;
 
     let category: LabeledToken['outcome']['category'] = 'flat';
@@ -212,7 +283,7 @@ export function buildLabeledDataset(
       features: f,
       outcome: {
         entryTriggered: true,
-        hitTwoX: o.hit_2x === 1,
+        hitTwoX: maxGain >= 100,
         maxGainPct: maxGain,
         maxDrawdownPct: maxDrawdown,
         finalGainPct: finalGain,
@@ -248,9 +319,27 @@ export function buildFullDataset(
     const o = outcomeMap.get(mint);
 
     if (o) {
-      const maxGain = o.max_gain_pct ?? 0;
-      const finalGain = o.final_gain_pct ?? 0;
-      const maxDrawdown = o.max_drawdown_pct ?? 0;
+      // Recompute outcome relative to checkpoint price, not entry trigger price
+      const checkpointPrice = f.priceSol;
+      const snapshots = db.prepare(`
+        SELECT price_sol, seconds_since_creation
+        FROM snapshots WHERE mint = ? AND price_sol IS NOT NULL
+        ORDER BY seconds_since_creation ASC
+      `).all(mint) as any[];
+
+      const postCheckpointPrices = snapshots
+        .filter((s: any) => s.seconds_since_creation > checkpointSeconds)
+        .map((s: any) => s.price_sol);
+
+      if (postCheckpointPrices.length === 0 || checkpointPrice <= 0) continue;
+
+      const maxPrice = Math.max(...postCheckpointPrices);
+      const finalPrice = postCheckpointPrices[postCheckpointPrices.length - 1];
+      const minAfterCheckpoint = Math.min(...postCheckpointPrices);
+
+      const maxGain = ((maxPrice - checkpointPrice) / checkpointPrice) * 100;
+      const finalGain = ((finalPrice - checkpointPrice) / checkpointPrice) * 100;
+      const maxDrawdown = ((minAfterCheckpoint - checkpointPrice) / checkpointPrice) * 100;
 
       let category: LabeledToken['outcome']['category'] = 'flat';
       if (maxGain >= 100 && finalGain >= 50) category = 'moon';
@@ -262,7 +351,7 @@ export function buildFullDataset(
         features: f,
         outcome: {
           entryTriggered: o.entry_triggered === 1,
-          hitTwoX: o.hit_2x === 1,
+          hitTwoX: maxGain >= 100,
           maxGainPct: maxGain,
           maxDrawdownPct: maxDrawdown,
           finalGainPct: finalGain,
@@ -272,6 +361,7 @@ export function buildFullDataset(
       });
     } else {
       // No outcome row — derive from snapshots
+      // Use the checkpoint price as reference (this is where we'd actually buy)
       const snapshots = db.prepare(`
         SELECT price_sol, seconds_since_creation
         FROM snapshots WHERE mint = ? AND price_sol IS NOT NULL
@@ -280,15 +370,28 @@ export function buildFullDataset(
 
       if (snapshots.length < 2) continue;
 
-      const entryPrice = snapshots[0].price_sol;
-      const prices = snapshots.map((s: any) => s.price_sol);
-      const maxPrice = Math.max(...prices);
-      const finalPrice = prices[prices.length - 1];
-      const minAfterFirst = Math.min(...prices.slice(1));
+      // Find the snapshot closest to the checkpoint to use as reference price
+      const checkpointSnapshot = snapshots.reduce((best: any, s: any) =>
+        Math.abs(s.seconds_since_creation - checkpointSeconds) < Math.abs(best.seconds_since_creation - checkpointSeconds)
+          ? s : best
+      );
+      const checkpointPrice = checkpointSnapshot.price_sol;
 
-      const maxGain = entryPrice > 0 ? ((maxPrice - entryPrice) / entryPrice) * 100 : 0;
-      const finalGain = entryPrice > 0 ? ((finalPrice - entryPrice) / entryPrice) * 100 : 0;
-      const maxDrawdown = entryPrice > 0 ? ((minAfterFirst - entryPrice) / entryPrice) * 100 : 0;
+      // Only look at prices AFTER the checkpoint for outcome measurement
+      const postCheckpointPrices = snapshots
+        .filter((s: any) => s.seconds_since_creation > checkpointSeconds)
+        .map((s: any) => s.price_sol);
+
+      // If no post-checkpoint data, we can't measure the outcome
+      if (postCheckpointPrices.length === 0) continue;
+
+      const maxPrice = Math.max(...postCheckpointPrices);
+      const finalPrice = postCheckpointPrices[postCheckpointPrices.length - 1];
+      const minAfterCheckpoint = Math.min(...postCheckpointPrices);
+
+      const maxGain = checkpointPrice > 0 ? ((maxPrice - checkpointPrice) / checkpointPrice) * 100 : 0;
+      const finalGain = checkpointPrice > 0 ? ((finalPrice - checkpointPrice) / checkpointPrice) * 100 : 0;
+      const maxDrawdown = checkpointPrice > 0 ? ((minAfterCheckpoint - checkpointPrice) / checkpointPrice) * 100 : 0;
 
       let category: LabeledToken['outcome']['category'] = 'flat';
       if (maxGain >= 100 && finalGain >= 50) category = 'moon';
@@ -326,6 +429,7 @@ export function computeCorrelations(dataset: LabeledToken[]): FeatureCorrelation
     'buyCount', 'sellCount', 'uniqueBuyers', 'uniqueSellers',
     'buyVelocity', 'sellRatio', 'buyerTxRatio', 'marketCapSol',
     'priceAcceleration', 'buyAcceleration', 'txBurst', 'holderConcentration',
+    'timeSincePeakVelocity', 'buyVelocityTrend',
   ];
 
   const results: FeatureCorrelation[] = [];

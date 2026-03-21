@@ -1,3 +1,4 @@
+import fs from 'fs';
 import { config, hasCollectConfig } from './config';
 import { openDatabase, closeDatabase } from './db/init';
 import { markStaleRunsAsFailed } from './db/queries/runs';
@@ -9,6 +10,21 @@ async function main(): Promise<void> {
     event: 'startup',
     timestamp: new Date().toISOString(),
   }));
+
+  // RESET_DB=true → wipe the database file before opening.
+  // Set this env var in Railway dashboard, deploy, then remove it.
+  if (process.env.RESET_DB === 'true') {
+    for (const suffix of ['', '-wal', '-shm']) {
+      const file = config.dbPath + suffix;
+      if (fs.existsSync(file)) {
+        fs.unlinkSync(file);
+      }
+    }
+    console.log(JSON.stringify({
+      event: 'database_reset',
+      message: 'Database wiped due to RESET_DB=true. Remove this env var now.',
+    }));
+  }
 
   const db = openDatabase(config.dbPath);
 
