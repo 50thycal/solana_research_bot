@@ -27,7 +27,9 @@ export const config = {
   // Database
   dbPath: envStr('DB_PATH', './data/research.db'),
 
-  // Collect mode — single-token tracking
+  // Collect mode
+  /** Max tokens to track concurrently. Default: 3 */
+  maxConcurrentTokens: envInt('MAX_CONCURRENT_TOKENS', 3),
   /** How long to track each token (seconds). Default: 300 (5 minutes) */
   trackingDurationSeconds: envInt('TRACKING_DURATION_SECONDS', 300),
   /** Snapshot interval (seconds). Default: 5 */
