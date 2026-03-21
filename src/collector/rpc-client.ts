@@ -36,18 +36,7 @@ export class RpcClient {
         commitment: 'confirmed',
       });
 
-      if (!tx) {
-        log({ event: 'rpc_resolve_debug', signature, reason: 'tx_not_found' });
-        return null;
-      }
-      if (!tx.meta) {
-        log({ event: 'rpc_resolve_debug', signature, reason: 'no_meta' });
-        return null;
-      }
-      if (tx.meta.err) {
-        log({ event: 'rpc_resolve_debug', signature, reason: 'tx_error', txErr: JSON.stringify(tx.meta.err) });
-        return null;
-      }
+      if (!tx || !tx.meta || tx.meta.err) return null;
 
       const message = tx.transaction.message;
       const accountKeys = message.staticAccountKeys
@@ -62,53 +51,53 @@ export class RpcClient {
         );
       }
 
-      // Find the pump.fun instruction
+      // Find the pump.fun Create instruction — check both top-level and inner (CPI) instructions.
+      // Pump.fun Create is often invoked via CPI through wrapper programs like proVF4...
       const compiledInstructions = message.compiledInstructions
         ?? (message as any).instructions
         ?? [];
 
       const pumpProgramId = PUMP_FUN_PROGRAM_ID.toBase58();
-      const ixPrograms = compiledInstructions.map((ix: any) => accountKeys[ix.programIdIndex] ?? 'unknown');
 
-      let pumpIxFound = false;
-      for (const ix of compiledInstructions) {
+      // Helper to try parsing a pump.fun instruction
+      const tryParse = (ix: any): PumpfunCreateEvent | null => {
         const programIdIndex = ix.programIdIndex;
-        if (accountKeys[programIdIndex] !== pumpProgramId) continue;
-        pumpIxFound = true;
+        if (accountKeys[programIdIndex] !== pumpProgramId) return null;
 
         const data = Buffer.from(ix.data instanceof Uint8Array ? ix.data : Buffer.from(ix.data, 'base64'));
         const accountIndices: number[] = ix.accountKeyIndexes ?? (ix as any).accounts ?? [];
 
-        const parsed = parseCreateFromAccountsAndData(
+        return parseCreateFromAccountsAndData(
           accountKeys,
           programIdIndex,
           accountIndices,
           data,
           tx.blockTime ?? undefined
         );
+      };
 
+      // 1. Check top-level instructions
+      for (const ix of compiledInstructions) {
+        const parsed = tryParse(ix);
         if (parsed) return parsed;
-
-        // Log why parsing failed
-        log({
-          event: 'rpc_resolve_debug',
-          signature,
-          reason: 'parse_returned_null',
-          dataLen: data.length,
-          discriminator: data.subarray(0, 8).toString('hex'),
-          accountCount: accountIndices.length,
-        });
       }
 
-      if (!pumpIxFound) {
-        log({
-          event: 'rpc_resolve_debug',
-          signature,
-          reason: 'no_pumpfun_ix',
-          ixCount: compiledInstructions.length,
-          programs: ixPrograms.join(','),
-        });
+      // 2. Check inner instructions (CPI) — this is where pump.fun Create often lives
+      const innerInstructions = tx.meta.innerInstructions ?? [];
+      for (const inner of innerInstructions) {
+        for (const ix of (inner.instructions ?? [])) {
+          const parsed = tryParse(ix);
+          if (parsed) return parsed;
+        }
       }
+
+      log({
+        event: 'rpc_resolve_debug',
+        signature,
+        reason: 'no_pumpfun_create_found',
+        topLevelIxCount: compiledInstructions.length,
+        innerIxGroups: innerInstructions.length,
+      });
 
       return null;
     } catch (err) {
