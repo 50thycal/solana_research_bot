@@ -1025,8 +1025,9 @@ export function getDashboardHtml(): string {
           banner.className = 'status-banner active';
           dot.className = 'status-dot active';
           var elapsed = Math.round((Date.now() - ar.started_at) / 60000);
-          statusText.textContent = 'Bot is actively collecting data';
-          statusDetail.textContent = 'Tracking ' + (ar.tokens_tracking || 0) + ' tokens | Running for ' + elapsed + ' min | ' + (ar.entries_triggered || 0) + ' entries triggered';
+          var tracking = ar.tokens_tracking || 0;
+          statusText.textContent = 'Bot is actively collecting — tracking ' + tracking + ' token' + (tracking !== 1 ? 's' : '');
+          statusDetail.textContent = 'Running for ' + elapsed + ' min | ' + s.active_runs + ' active run' + (s.active_runs !== 1 ? 's' : '');
         } else {
           banner.className = 'status-banner idle';
           dot.className = 'status-dot idle';
