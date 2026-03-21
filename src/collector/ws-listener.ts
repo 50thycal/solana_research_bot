@@ -1,8 +1,11 @@
-import WebSocket from 'ws';
+import { Connection, PublicKey, Logs } from '@solana/web3.js';
 import { PUMP_FUN_PROGRAM_ID } from '../pumpfun/constants';
 import { log, logError } from '../logger';
 
 export interface WsListenerOptions {
+  /** HTTP RPC endpoint (e.g. https://mainnet.helius-rpc.com/?api-key=...) */
+  rpcUrl: string;
+  /** WebSocket endpoint (e.g. wss://mainnet.helius-rpc.com/?api-key=...) */
   wsUrl: string;
   /** Called when a pump.fun Create transaction signature is detected. */
   onCreateSignature: (signature: string) => void;
@@ -13,20 +16,21 @@ export interface WsListenerOptions {
 }
 
 /**
- * WebSocket listener that subscribes to pump.fun Create events via Helius logsSubscribe.
- * Implements reconnection with 5s backoff as specified.
+ * Listens for pump.fun token creation events using Connection.onLogs().
  *
- * Since logsSubscribe only provides logs + signature (not account keys),
- * this emits the tx signature so the collector can fetch full details via getTransaction.
+ * Uses the @solana/web3.js Connection class (same approach as the trading bot)
+ * instead of raw WebSocket + logsSubscribe. The SDK handles WS connection
+ * management, buffering, and reconnection internally.
+ *
+ * Detects both legacy Create and Token-2022 CreateV2 instructions.
  */
 export class WsListener {
-  private ws: WebSocket | null = null;
+  private connection: Connection | null = null;
   private subscriptionId: number | null = null;
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private disconnectedAt: number | null = null;
   private stopped = false;
   private readonly opts: WsListenerOptions;
-  private readonly RECONNECT_DELAY_MS = 5000;
+  private processedSignatures = new Set<string>();
+  private readonly MAX_PROCESSED_CACHE = 5000;
 
   constructor(opts: WsListenerOptions) {
     this.opts = opts;
@@ -39,27 +43,13 @@ export class WsListener {
 
   stop(): void {
     this.stopped = true;
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-    if (this.ws) {
-      try {
-        if (this.subscriptionId !== null) {
-          this.ws.send(JSON.stringify({
-            jsonrpc: '2.0',
-            id: 2,
-            method: 'logsUnsubscribe',
-            params: [this.subscriptionId],
-          }));
-        }
-        this.ws.close();
-      } catch {
-        // Ignore errors during cleanup
-      }
-      this.ws = null;
+    if (this.connection && this.subscriptionId !== null) {
+      this.connection.removeOnLogsListener(this.subscriptionId).catch(() => {
+        // Ignore cleanup errors
+      });
       this.subscriptionId = null;
     }
+    this.connection = null;
   }
 
   private connect(): void {
@@ -70,123 +60,40 @@ export class WsListener {
       url: this.opts.wsUrl.replace(/api-key=.*/, 'api-key=***'),
     });
 
-    this.ws = new WebSocket(this.opts.wsUrl);
-
-    this.ws.on('open', () => {
-      log({ event: 'ws_connected' });
-
-      if (this.disconnectedAt !== null) {
-        const duration = Date.now() - this.disconnectedAt;
-        this.opts.onReconnect(duration);
-        this.disconnectedAt = null;
-      }
-
-      this.subscribe();
+    this.connection = new Connection(this.opts.rpcUrl, {
+      wsEndpoint: this.opts.wsUrl,
+      commitment: 'confirmed',
     });
 
-    this.ws.on('message', (raw: WebSocket.Data) => {
-      try {
-        const msg = JSON.parse(raw.toString());
-        this.handleMessage(msg);
-      } catch (err) {
-        logError({
-          event: 'ws_parse_error',
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    });
+    this.subscriptionId = this.connection.onLogs(
+      PUMP_FUN_PROGRAM_ID,
+      (logs: Logs) => this.handleLogs(logs),
+      'confirmed',
+    );
 
-    this.ws.on('error', (err: Error) => {
-      logError({
-        event: 'ws_error',
-        error: err.message,
-      });
-    });
-
-    this.ws.on('close', (code: number, reason: Buffer) => {
-      log({
-        event: 'ws_disconnected',
-        code,
-        reason: reason.toString(),
-      });
-
-      this.subscriptionId = null;
-      this.ws = null;
-
-      if (!this.stopped) {
-        if (this.disconnectedAt === null) {
-          this.disconnectedAt = Date.now();
-          this.opts.onDisconnect(this.disconnectedAt);
-        }
-        this.scheduleReconnect();
-      }
+    log({
+      event: 'ws_subscribed',
+      subscriptionId: this.subscriptionId,
     });
   }
 
-  private subscribe(): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-
-    const request = {
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'logsSubscribe',
-      params: [
-        {
-          mentions: [PUMP_FUN_PROGRAM_ID.toBase58()],
-        },
-        {
-          commitment: 'confirmed',
-        },
-      ],
-    };
-
-    this.ws.send(JSON.stringify(request));
-  }
-
-  private handleMessage(msg: any): void {
-    // Subscription confirmation
-    if (msg.id === 1 && msg.result !== undefined) {
-      this.subscriptionId = msg.result;
-      log({
-        event: 'ws_subscribed',
-        subscriptionId: this.subscriptionId,
-      });
-      return;
-    }
-
-    // Log notification
-    if (msg.method === 'logsNotification' && msg.params?.result?.value) {
-      this.handleLogNotification(msg.params.result.value);
-    }
-  }
-
-  private handleLogNotification(value: any): void {
-    const { signature, err, logs: txLogs } = value;
-
+  private handleLogs(logs: Logs): void {
     // Skip failed transactions
-    if (err) return;
-    if (!txLogs || !Array.isArray(txLogs)) return;
+    if (logs.err) return;
 
-    // Check if this is a pump.fun Create instruction specifically.
-    // Solana logs are ordered: "Program X invoke" → program logs → "Program X success".
-    // We need "Instruction: Create" to appear while pump.fun is the active program,
-    // NOT from ATA or other programs (which also emit "Instruction: Create").
-    const pumpProgramId = PUMP_FUN_PROGRAM_ID.toBase58();
-    let inPumpfun = false;
-    let pumpfunDepth = 0;
+    const signature = logs.signature;
+
+    // Skip duplicates
+    if (this.processedSignatures.has(signature)) return;
+
+    // Look for pump.fun Create or CreateV2 instruction in the logs.
+    // Must match EXACTLY — not "CreateTokenAccount" or "CreateIdempotent".
+    // CreateV2 is for Token-2022 based pump.fun tokens.
+    const logMessages = logs.logs || [];
     let isPumpfunCreate = false;
 
-    for (const line of txLogs) {
-      if (line.includes(`Program ${pumpProgramId} invoke`)) {
-        inPumpfun = true;
-        pumpfunDepth++;
-      } else if (inPumpfun && line.includes(`Program ${pumpProgramId} success`)) {
-        pumpfunDepth--;
-        if (pumpfunDepth <= 0) {
-          inPumpfun = false;
-          pumpfunDepth = 0;
-        }
-      } else if (inPumpfun && line === 'Program log: Instruction: Create') {
+    for (const line of logMessages) {
+      if (line === 'Program log: Instruction: Create' || line === 'Program log: Instruction: CreateV2') {
         isPumpfunCreate = true;
         break;
       }
@@ -194,25 +101,18 @@ export class WsListener {
 
     if (!isPumpfunCreate) return;
 
+    // Track processed signatures to avoid duplicates (bounded cache)
+    this.processedSignatures.add(signature);
+    if (this.processedSignatures.size > this.MAX_PROCESSED_CACHE) {
+      const first = this.processedSignatures.values().next().value;
+      if (first !== undefined) this.processedSignatures.delete(first);
+    }
+
     log({
       event: 'ws_create_detected',
       signature,
     });
 
     this.opts.onCreateSignature(signature);
-  }
-
-  private scheduleReconnect(): void {
-    if (this.stopped || this.reconnectTimer) return;
-
-    log({
-      event: 'ws_reconnect_scheduled',
-      delayMs: this.RECONNECT_DELAY_MS,
-    });
-
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null;
-      this.connect();
-    }, this.RECONNECT_DELAY_MS);
   }
 }
