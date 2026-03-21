@@ -161,17 +161,38 @@ export class WsListener {
   }
 
   private handleLogNotification(value: any): void {
-    const { signature, err, logs } = value;
+    const { signature, err, logs: txLogs } = value;
 
     // Skip failed transactions
     if (err) return;
-    if (!logs || !Array.isArray(logs)) return;
+    if (!txLogs || !Array.isArray(txLogs)) return;
 
-    // Check if this is a Create instruction
-    const hasCreate = logs.some((log: string) =>
-      log.includes('Program log: Instruction: Create')
-    );
-    if (!hasCreate) return;
+    // Check if this is a pump.fun Create instruction specifically.
+    // Solana logs are ordered: "Program X invoke" → program logs → "Program X success".
+    // We need "Instruction: Create" to appear while pump.fun is the active program,
+    // NOT from ATA or other programs (which also emit "Instruction: Create").
+    const pumpProgramId = PUMP_FUN_PROGRAM_ID.toBase58();
+    let inPumpfun = false;
+    let pumpfunDepth = 0;
+    let isPumpfunCreate = false;
+
+    for (const line of txLogs) {
+      if (line.includes(`Program ${pumpProgramId} invoke`)) {
+        inPumpfun = true;
+        pumpfunDepth++;
+      } else if (inPumpfun && line.includes(`Program ${pumpProgramId} success`)) {
+        pumpfunDepth--;
+        if (pumpfunDepth <= 0) {
+          inPumpfun = false;
+          pumpfunDepth = 0;
+        }
+      } else if (inPumpfun && line === 'Program log: Instruction: Create') {
+        isPumpfunCreate = true;
+        break;
+      }
+    }
+
+    if (!isPumpfunCreate) return;
 
     log({
       event: 'ws_create_detected',

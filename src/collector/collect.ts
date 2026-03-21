@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
 import { config, configSnapshot } from '../config';
-import { insertRun, completeRun, incrementWsDisconnect } from '../db/queries/runs';
+import { insertRun, completeRun, incrementWsDisconnect, deleteRunData } from '../db/queries/runs';
 import { insertToken } from '../db/queries/tokens';
 import { insertTokenRun } from '../db/queries/token-runs';
 import { insertSnapshot, SnapshotInsert } from '../db/queries/snapshots';
@@ -165,7 +165,22 @@ async function trackTokenLifecycle(
     intervalSeconds: config.snapshotIntervalSeconds,
   });
 
-  const snapshotCount = await trackToken(db, rpc, runId, event, isStopped);
+  const result = await trackToken(db, rpc, runId, event, isStopped);
+
+  if (result.abandoned) {
+    // Dead token — delete all data so it doesn't pollute training set
+    deleteRunData(db, runId, event.mint);
+    log({
+      event: 'token_abandoned',
+      mint: event.mint,
+      name: event.name,
+      symbol: event.symbol,
+      reason: 'insufficient_activity',
+      totalTxCount: result.lastTxCount,
+      snapshotsBeforeExit: result.snapshotCount,
+    });
+    return;
+  }
 
   if (wsDisconnects.count > 0) {
     incrementWsDisconnect(db, runId, wsDisconnects.totalMs);
@@ -180,7 +195,7 @@ async function trackTokenLifecycle(
     mint: event.mint,
     name: event.name,
     symbol: event.symbol,
-    snapshotCount,
+    snapshotCount: result.snapshotCount,
   });
 }
 
@@ -193,13 +208,19 @@ interface TokenEvent {
   bondingCurvePda: string;
 }
 
+interface TrackResult {
+  snapshotCount: number;
+  abandoned: boolean;
+  lastTxCount: number;
+}
+
 async function trackToken(
   db: Database.Database,
   rpc: RpcClient,
   runId: string,
   token: TokenEvent,
   isStopped: () => boolean
-): Promise<number> {
+): Promise<TrackResult> {
   const state = {
     parsedSignatures: new Set<string>(),
     buyerWallets: new Set<string>(),
@@ -324,6 +345,12 @@ async function trackToken(
         totalTxCount,
         txCountDelta,
       });
+
+      // Early exit: after N snapshots, if tx count is still below threshold,
+      // this token is dead — no point tracking 5 more minutes of flatline.
+      if (snapshotCount === config.earlyExitAfterSnapshots && totalTxCount < config.minTxToKeep) {
+        return { snapshotCount, abandoned: true, lastTxCount: totalTxCount };
+      }
     } catch (err) {
       logError({
         event: 'snapshot_error',
@@ -341,7 +368,7 @@ async function trackToken(
     }
   }
 
-  return snapshotCount;
+  return { snapshotCount, abandoned: false, lastTxCount: state.lastTotalTxCount };
 }
 
 function uniformSample<T>(arr: T[], count: number): T[] {
