@@ -239,15 +239,24 @@ function getStats(db: Database.Database, res: http.ServerResponse): void {
     LIMIT 1
   `).get();
 
-  // Get active run details if any
-  const activeRun = db.prepare(`
+  // Get active run details — with parallel tracking there can be multiple
+  const activeRuns = db.prepare(`
     SELECT r.*,
       (SELECT COUNT(DISTINCT tr.mint) FROM token_runs tr WHERE tr.run_id = r.run_id) as tokens_tracking
     FROM runs r
     WHERE r.status = 'running'
-    ORDER BY r.started_at DESC
-    LIMIT 1
-  `).get();
+    ORDER BY r.started_at ASC
+  `).all() as any[];
+
+  // Build a summary for the frontend
+  const activeRun = activeRuns.length > 0 ? {
+    // Use the earliest start time
+    started_at: activeRuns[0].started_at,
+    // Total tokens being tracked across all active runs
+    tokens_tracking: activeRuns.length,
+    entries_triggered: activeRuns.reduce((sum: number, r: any) => sum + (r.entries_triggered || 0), 0),
+    active_count: activeRuns.length,
+  } : null;
 
   jsonResponse(res, { stats, recentRun, activeRun });
 }
