@@ -38,10 +38,11 @@ export async function runCollect(db: Database.Database): Promise<void> {
   const wsListener = new WsListener({
     wsUrl: config.heliusWsUrl,
     onCreateSignature: (signature: string) => {
-      // Only queue if we have room or will soon
-      if (signatureQueue.length < maxConcurrent * 2) {
-        signatureQueue.push(signature);
+      // Keep only the freshest signatures — evict oldest when full
+      if (signatureQueue.length >= maxConcurrent) {
+        signatureQueue.shift(); // drop oldest
       }
+      signatureQueue.push(signature);
     },
     onDisconnect: () => {
       console.log(JSON.stringify({ event: 'ws_disconnect' }));
@@ -114,7 +115,17 @@ async function trackTokenLifecycle(
   isStopped: () => boolean
 ): Promise<void> {
   console.log(JSON.stringify({ event: 'resolving_token', signature }));
-  const event = await rpc.fetchCreateTransaction(signature);
+
+  // Retry up to 3 times with backoff — the tx may not be available immediately
+  let event = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    event = await rpc.fetchCreateTransaction(signature);
+    if (event) break;
+    if (attempt < 3) {
+      console.log(JSON.stringify({ event: 'token_resolve_retry', signature, attempt }));
+      await sleep(attempt * 1000); // 1s, 2s backoff
+    }
+  }
   if (!event) {
     console.log(JSON.stringify({ event: 'token_resolve_failed', signature }));
     return;
