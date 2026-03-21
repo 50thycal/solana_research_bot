@@ -36,6 +36,10 @@ export const config = {
   snapshotIntervalSeconds: envInt('SNAPSHOT_INTERVAL_SECONDS', 5),
   /** Max transactions to sample per snapshot for buy/sell classification */
   maxTxSamplePerSnapshot: envInt('MAX_TX_SAMPLE_PER_SNAPSHOT', 10),
+  /** Minimum tx count required after early check — tokens below this are rejected as dead */
+  minTxToKeep: envInt('MIN_TX_TO_KEEP', 10),
+  /** Number of snapshots before checking if the token is dead */
+  earlyExitAfterSnapshots: envInt('EARLY_EXIT_AFTER_SNAPSHOTS', 6),
 
   // Dashboard
   /** Port for the dashboard web server */

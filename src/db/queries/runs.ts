@@ -93,6 +93,21 @@ export function updateEntriesTriggered(
   `).run(count, runId);
 }
 
+/** Delete a run and all associated data (snapshots, token_runs, token if orphaned). */
+export function deleteRunData(db: Database.Database, runId: string, mint: string): void {
+  const del = db.transaction(() => {
+    db.prepare('DELETE FROM snapshots WHERE run_id = ? AND mint = ?').run(runId, mint);
+    db.prepare('DELETE FROM token_runs WHERE run_id = ? AND mint = ?').run(runId, mint);
+    db.prepare('DELETE FROM runs WHERE run_id = ?').run(runId);
+    // Delete the token only if no other runs reference it
+    const remaining = db.prepare('SELECT 1 FROM token_runs WHERE mint = ? LIMIT 1').get(mint);
+    if (!remaining) {
+      db.prepare('DELETE FROM tokens WHERE mint = ?').run(mint);
+    }
+  });
+  del();
+}
+
 /** Get a single run by ID. */
 export function getRun(db: Database.Database, runId: string): RunRow | undefined {
   return db.prepare('SELECT * FROM runs WHERE run_id = ?').get(runId) as RunRow | undefined;
