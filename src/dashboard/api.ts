@@ -1,5 +1,6 @@
 import http from 'http';
 import Database from 'better-sqlite3';
+import { logError } from '../logger';
 import {
   extractFeatureVectors,
   buildLabeledDataset,
@@ -61,11 +62,11 @@ export function handleApiRequest(
 
     errorResponse(res, 'Not found', 404);
   } catch (err) {
-    console.error(JSON.stringify({
+    logError({
       event: 'api_error',
       path: url.pathname,
       error: err instanceof Error ? err.message : String(err),
-    }));
+    });
     errorResponse(res, 'Internal server error', 500);
   }
 }
