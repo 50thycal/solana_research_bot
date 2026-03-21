@@ -3,7 +3,7 @@ import { deserializeBondingCurve, decodeBondingCurve, BondingCurveDecoded } from
 import { parseCreateFromAccountsAndData, PumpfunCreateEvent } from '../pumpfun/parse-create';
 import { PUMP_FUN_PROGRAM_ID } from '../pumpfun/constants';
 import { config } from '../config';
-import { logError } from '../logger';
+import { log, logError } from '../logger';
 
 const PER_CALL_DELAY_MS = 50;
 const BATCH_SIZE = 100; // max accounts per getMultipleAccounts call
@@ -36,7 +36,18 @@ export class RpcClient {
         commitment: 'confirmed',
       });
 
-      if (!tx || !tx.meta || tx.meta.err) return null;
+      if (!tx) {
+        log({ event: 'rpc_resolve_debug', signature, reason: 'tx_not_found' });
+        return null;
+      }
+      if (!tx.meta) {
+        log({ event: 'rpc_resolve_debug', signature, reason: 'no_meta' });
+        return null;
+      }
+      if (tx.meta.err) {
+        log({ event: 'rpc_resolve_debug', signature, reason: 'tx_error', txErr: JSON.stringify(tx.meta.err) });
+        return null;
+      }
 
       const message = tx.transaction.message;
       const accountKeys = message.staticAccountKeys
@@ -56,9 +67,14 @@ export class RpcClient {
         ?? (message as any).instructions
         ?? [];
 
+      const pumpProgramId = PUMP_FUN_PROGRAM_ID.toBase58();
+      const ixPrograms = compiledInstructions.map((ix: any) => accountKeys[ix.programIdIndex] ?? 'unknown');
+
+      let pumpIxFound = false;
       for (const ix of compiledInstructions) {
         const programIdIndex = ix.programIdIndex;
-        if (accountKeys[programIdIndex] !== PUMP_FUN_PROGRAM_ID.toBase58()) continue;
+        if (accountKeys[programIdIndex] !== pumpProgramId) continue;
+        pumpIxFound = true;
 
         const data = Buffer.from(ix.data instanceof Uint8Array ? ix.data : Buffer.from(ix.data, 'base64'));
         const accountIndices: number[] = ix.accountKeyIndexes ?? (ix as any).accounts ?? [];
@@ -72,6 +88,26 @@ export class RpcClient {
         );
 
         if (parsed) return parsed;
+
+        // Log why parsing failed
+        log({
+          event: 'rpc_resolve_debug',
+          signature,
+          reason: 'parse_returned_null',
+          dataLen: data.length,
+          discriminator: data.subarray(0, 8).toString('hex'),
+          accountCount: accountIndices.length,
+        });
+      }
+
+      if (!pumpIxFound) {
+        log({
+          event: 'rpc_resolve_debug',
+          signature,
+          reason: 'no_pumpfun_ix',
+          ixCount: compiledInstructions.length,
+          programs: ixPrograms.join(','),
+        });
       }
 
       return null;
