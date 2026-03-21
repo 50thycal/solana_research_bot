@@ -197,9 +197,28 @@ export function buildLabeledDataset(
     const f = featureMap.get(o.mint);
     if (!f) continue;
 
-    const maxGain = o.max_gain_pct ?? 0;
-    const finalGain = o.final_gain_pct ?? 0;
-    const maxDrawdown = o.max_drawdown_pct ?? 0;
+    // Recompute outcome relative to checkpoint price, not entry trigger price
+    // This way the model learns "will it 2x from where I'd buy at this checkpoint?"
+    const checkpointPrice = f.priceSol;
+    const snapshots = db.prepare(`
+      SELECT price_sol, seconds_since_creation
+      FROM snapshots WHERE mint = ? AND price_sol IS NOT NULL
+      ORDER BY seconds_since_creation ASC
+    `).all(o.mint) as any[];
+
+    const postCheckpointPrices = snapshots
+      .filter((s: any) => s.seconds_since_creation > checkpointSeconds)
+      .map((s: any) => s.price_sol);
+
+    if (postCheckpointPrices.length === 0 || checkpointPrice <= 0) continue;
+
+    const maxPrice = Math.max(...postCheckpointPrices);
+    const finalPrice = postCheckpointPrices[postCheckpointPrices.length - 1];
+    const minAfterCheckpoint = Math.min(...postCheckpointPrices);
+
+    const maxGain = ((maxPrice - checkpointPrice) / checkpointPrice) * 100;
+    const finalGain = ((finalPrice - checkpointPrice) / checkpointPrice) * 100;
+    const maxDrawdown = ((minAfterCheckpoint - checkpointPrice) / checkpointPrice) * 100;
     const maxPriceSeconds = o.max_price_seconds ?? 0;
 
     let category: LabeledToken['outcome']['category'] = 'flat';
@@ -212,7 +231,7 @@ export function buildLabeledDataset(
       features: f,
       outcome: {
         entryTriggered: true,
-        hitTwoX: o.hit_2x === 1,
+        hitTwoX: maxGain >= 100,
         maxGainPct: maxGain,
         maxDrawdownPct: maxDrawdown,
         finalGainPct: finalGain,
@@ -248,9 +267,27 @@ export function buildFullDataset(
     const o = outcomeMap.get(mint);
 
     if (o) {
-      const maxGain = o.max_gain_pct ?? 0;
-      const finalGain = o.final_gain_pct ?? 0;
-      const maxDrawdown = o.max_drawdown_pct ?? 0;
+      // Recompute outcome relative to checkpoint price, not entry trigger price
+      const checkpointPrice = f.priceSol;
+      const snapshots = db.prepare(`
+        SELECT price_sol, seconds_since_creation
+        FROM snapshots WHERE mint = ? AND price_sol IS NOT NULL
+        ORDER BY seconds_since_creation ASC
+      `).all(mint) as any[];
+
+      const postCheckpointPrices = snapshots
+        .filter((s: any) => s.seconds_since_creation > checkpointSeconds)
+        .map((s: any) => s.price_sol);
+
+      if (postCheckpointPrices.length === 0 || checkpointPrice <= 0) continue;
+
+      const maxPrice = Math.max(...postCheckpointPrices);
+      const finalPrice = postCheckpointPrices[postCheckpointPrices.length - 1];
+      const minAfterCheckpoint = Math.min(...postCheckpointPrices);
+
+      const maxGain = ((maxPrice - checkpointPrice) / checkpointPrice) * 100;
+      const finalGain = ((finalPrice - checkpointPrice) / checkpointPrice) * 100;
+      const maxDrawdown = ((minAfterCheckpoint - checkpointPrice) / checkpointPrice) * 100;
 
       let category: LabeledToken['outcome']['category'] = 'flat';
       if (maxGain >= 100 && finalGain >= 50) category = 'moon';
@@ -262,7 +299,7 @@ export function buildFullDataset(
         features: f,
         outcome: {
           entryTriggered: o.entry_triggered === 1,
-          hitTwoX: o.hit_2x === 1,
+          hitTwoX: maxGain >= 100,
           maxGainPct: maxGain,
           maxDrawdownPct: maxDrawdown,
           finalGainPct: finalGain,
@@ -272,6 +309,7 @@ export function buildFullDataset(
       });
     } else {
       // No outcome row — derive from snapshots
+      // Use the checkpoint price as reference (this is where we'd actually buy)
       const snapshots = db.prepare(`
         SELECT price_sol, seconds_since_creation
         FROM snapshots WHERE mint = ? AND price_sol IS NOT NULL
@@ -280,15 +318,28 @@ export function buildFullDataset(
 
       if (snapshots.length < 2) continue;
 
-      const entryPrice = snapshots[0].price_sol;
-      const prices = snapshots.map((s: any) => s.price_sol);
-      const maxPrice = Math.max(...prices);
-      const finalPrice = prices[prices.length - 1];
-      const minAfterFirst = Math.min(...prices.slice(1));
+      // Find the snapshot closest to the checkpoint to use as reference price
+      const checkpointSnapshot = snapshots.reduce((best: any, s: any) =>
+        Math.abs(s.seconds_since_creation - checkpointSeconds) < Math.abs(best.seconds_since_creation - checkpointSeconds)
+          ? s : best
+      );
+      const checkpointPrice = checkpointSnapshot.price_sol;
 
-      const maxGain = entryPrice > 0 ? ((maxPrice - entryPrice) / entryPrice) * 100 : 0;
-      const finalGain = entryPrice > 0 ? ((finalPrice - entryPrice) / entryPrice) * 100 : 0;
-      const maxDrawdown = entryPrice > 0 ? ((minAfterFirst - entryPrice) / entryPrice) * 100 : 0;
+      // Only look at prices AFTER the checkpoint for outcome measurement
+      const postCheckpointPrices = snapshots
+        .filter((s: any) => s.seconds_since_creation > checkpointSeconds)
+        .map((s: any) => s.price_sol);
+
+      // If no post-checkpoint data, we can't measure the outcome
+      if (postCheckpointPrices.length === 0) continue;
+
+      const maxPrice = Math.max(...postCheckpointPrices);
+      const finalPrice = postCheckpointPrices[postCheckpointPrices.length - 1];
+      const minAfterCheckpoint = Math.min(...postCheckpointPrices);
+
+      const maxGain = checkpointPrice > 0 ? ((maxPrice - checkpointPrice) / checkpointPrice) * 100 : 0;
+      const finalGain = checkpointPrice > 0 ? ((finalPrice - checkpointPrice) / checkpointPrice) * 100 : 0;
+      const maxDrawdown = checkpointPrice > 0 ? ((minAfterCheckpoint - checkpointPrice) / checkpointPrice) * 100 : 0;
 
       let category: LabeledToken['outcome']['category'] = 'flat';
       if (maxGain >= 100 && finalGain >= 50) category = 'moon';
