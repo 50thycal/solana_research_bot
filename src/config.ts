@@ -23,6 +23,13 @@ export const config = {
   heliusApiKey: envStr('HELIUS_API_KEY', ''),
   heliusRpcUrl: envStr('HELIUS_RPC_URL', ''),
   heliusWsUrl: envStr('HELIUS_WS_URL', ''),
+  /** Enhanced WS (Atlas) URL for transactionSubscribe. Auto-derived from API key if not set. */
+  heliusEnhancedWsUrl: envStr(
+    'HELIUS_ENHANCED_WS_URL',
+    process.env.HELIUS_API_KEY
+      ? `wss://atlas-mainnet.helius-rpc.com?api-key=${process.env.HELIUS_API_KEY}`
+      : '',
+  ),
 
   // Database
   dbPath: envStr('DB_PATH', './data/research.db'),
@@ -48,7 +55,7 @@ export const config = {
 
 /** Check whether Helius credentials are configured for collection */
 export function hasCollectConfig(): boolean {
-  return !!(config.heliusApiKey && config.heliusRpcUrl && config.heliusWsUrl);
+  return !!(config.heliusApiKey && config.heliusRpcUrl && (config.heliusEnhancedWsUrl || config.heliusWsUrl));
 }
 
 /** JSON snapshot of config for storing in runs table.

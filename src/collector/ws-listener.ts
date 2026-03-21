@@ -13,20 +13,27 @@ export interface WsListenerOptions {
 }
 
 /**
- * WebSocket listener that subscribes to pump.fun Create events via Helius logsSubscribe.
- * Implements reconnection with 5s backoff as specified.
+ * WebSocket listener that subscribes to pump.fun Create events via Helius
+ * Enhanced WebSocket (transactionSubscribe on the Atlas endpoint).
  *
- * Since logsSubscribe only provides logs + signature (not account keys),
- * this emits the tx signature so the collector can fetch full details via getTransaction.
+ * Uses transactionSubscribe instead of logsSubscribe because logsSubscribe
+ * with `mentions` receives ALL pump.fun transactions (buys/sells/creates),
+ * which overwhelms the standard WS and causes most messages to be dropped.
+ * Enhanced WS on Atlas is designed for high-throughput streaming.
+ *
+ * Includes a heartbeat ping every 10s to keep the connection alive per
+ * Helius recommendations.
  */
 export class WsListener {
   private ws: WebSocket | null = null;
   private subscriptionId: number | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private disconnectedAt: number | null = null;
   private stopped = false;
   private readonly opts: WsListenerOptions;
   private readonly RECONNECT_DELAY_MS = 5000;
+  private readonly HEARTBEAT_INTERVAL_MS = 10_000;
 
   constructor(opts: WsListenerOptions) {
     this.opts = opts;
@@ -43,13 +50,17 @@ export class WsListener {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
     if (this.ws) {
       try {
         if (this.subscriptionId !== null) {
           this.ws.send(JSON.stringify({
             jsonrpc: '2.0',
             id: 2,
-            method: 'logsUnsubscribe',
+            method: 'transactionUnsubscribe',
             params: [this.subscriptionId],
           }));
         }
@@ -81,6 +92,7 @@ export class WsListener {
         this.disconnectedAt = null;
       }
 
+      this.startHeartbeat();
       this.subscribe();
     });
 
@@ -112,6 +124,7 @@ export class WsListener {
 
       this.subscriptionId = null;
       this.ws = null;
+      this.stopHeartbeat();
 
       if (!this.stopped) {
         if (this.disconnectedAt === null) {
@@ -126,16 +139,22 @@ export class WsListener {
   private subscribe(): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
+    const pumpProgramId = PUMP_FUN_PROGRAM_ID.toBase58();
+
     const request = {
       jsonrpc: '2.0',
-      id: 1,
-      method: 'logsSubscribe',
+      id: 420,
+      method: 'transactionSubscribe',
       params: [
         {
-          mentions: [PUMP_FUN_PROGRAM_ID.toBase58()],
+          failed: false,
+          accountInclude: [pumpProgramId],
         },
         {
           commitment: 'confirmed',
+          encoding: 'jsonParsed',
+          transactionDetails: 'full',
+          maxSupportedTransactionVersion: 0,
         },
       ],
     };
@@ -145,7 +164,7 @@ export class WsListener {
 
   private handleMessage(msg: any): void {
     // Subscription confirmation
-    if (msg.id === 1 && msg.result !== undefined) {
+    if (msg.id === 420 && msg.result !== undefined) {
       this.subscriptionId = msg.result;
       log({
         event: 'ws_subscribed',
@@ -154,29 +173,28 @@ export class WsListener {
       return;
     }
 
-    // Log notification
-    if (msg.method === 'logsNotification' && msg.params?.result?.value) {
-      this.handleLogNotification(msg.params.result.value);
+    // Transaction notification from transactionSubscribe
+    if (msg.method === 'transactionNotification' && msg.params?.result) {
+      this.handleTransactionNotification(msg.params.result);
     }
   }
 
-  private handleLogNotification(value: any): void {
-    const { signature, err, logs: txLogs } = value;
+  private handleTransactionNotification(result: any): void {
+    const signature = result.signature;
+    if (!signature) return;
 
-    // Skip failed transactions
-    if (err) return;
-    if (!txLogs || !Array.isArray(txLogs)) return;
+    // Check log messages for pump.fun Create instruction
+    const logs: string[] | undefined =
+      result.transaction?.meta?.logMessages;
 
-    // Check if this is a pump.fun Create instruction specifically.
-    // Solana logs are ordered: "Program X invoke" → program logs → "Program X success".
-    // We need "Instruction: Create" to appear while pump.fun is the active program,
-    // NOT from ATA or other programs (which also emit "Instruction: Create").
+    if (!logs || !Array.isArray(logs)) return;
+
     const pumpProgramId = PUMP_FUN_PROGRAM_ID.toBase58();
     let inPumpfun = false;
     let pumpfunDepth = 0;
     let isPumpfunCreate = false;
 
-    for (const line of txLogs) {
+    for (const line of logs) {
       if (line.includes(`Program ${pumpProgramId} invoke`)) {
         inPumpfun = true;
         pumpfunDepth++;
@@ -200,6 +218,22 @@ export class WsListener {
     });
 
     this.opts.onCreateSignature(signature);
+  }
+
+  private startHeartbeat(): void {
+    this.stopHeartbeat();
+    this.heartbeatTimer = setInterval(() => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.ping();
+      }
+    }, this.HEARTBEAT_INTERVAL_MS);
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
   }
 
   private scheduleReconnect(): void {
