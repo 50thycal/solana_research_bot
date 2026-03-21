@@ -37,9 +37,9 @@ export async function runCollect(db: Database.Database): Promise<void> {
   let activeCount = 0;
   let wsDisconnects = { count: 0, totalMs: 0 };
 
-  const wsUrl = config.heliusEnhancedWsUrl || config.heliusWsUrl;
   const wsListener = new WsListener({
-    wsUrl: wsUrl,
+    rpcUrl: config.heliusRpcUrl,
+    wsUrl: config.heliusWsUrl,
     onCreateSignature: (signature: string) => {
       // Always overwrite — we only want the freshest token
       latestSignature = signature;
