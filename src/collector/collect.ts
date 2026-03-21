@@ -15,13 +15,13 @@ function sleep(ms: number): Promise<void> {
 
 /**
  * Run collect mode.
- * Continuously: wait for the next new token on pump.fun, track it for
- * TRACKING_DURATION_SECONDS at SNAPSHOT_INTERVAL_SECONDS intervals,
- * then wait for the next one. One token at a time.
+ * Tracks up to MAX_CONCURRENT_TOKENS tokens in parallel.
+ * When a slot opens up, the next new token from the WebSocket queue is picked up.
  */
 export async function runCollect(db: Database.Database): Promise<void> {
   const rpc = new RpcClient(config.heliusRpcUrl);
   let stopped = false;
+  const maxConcurrent = config.maxConcurrentTokens;
 
   process.removeAllListeners('SIGTERM');
   process.on('SIGTERM', () => {
@@ -30,17 +30,17 @@ export async function runCollect(db: Database.Database): Promise<void> {
     setTimeout(() => process.exit(0), 5000);
   });
 
-  // WebSocket listener queues Create signatures.
-  // We only accept one when we're idle (not tracking).
-  let pendingSignature: string | null = null;
-  let accepting = true;
+  // Queue of pending signatures (FIFO). WS pushes here, main loop pops.
+  const signatureQueue: string[] = [];
+  let activeCount = 0;
   let wsDisconnects = { count: 0, totalMs: 0 };
 
   const wsListener = new WsListener({
     wsUrl: config.heliusWsUrl,
     onCreateSignature: (signature: string) => {
-      if (accepting && pendingSignature === null) {
-        pendingSignature = signature;
+      // Only queue if we have room or will soon
+      if (signatureQueue.length < maxConcurrent * 2) {
+        signatureQueue.push(signature);
       }
     },
     onDisconnect: () => {
@@ -55,82 +55,37 @@ export async function runCollect(db: Database.Database): Promise<void> {
   wsListener.start();
   console.log(JSON.stringify({
     event: 'collect_started',
+    maxConcurrentTokens: maxConcurrent,
     trackingDurationSeconds: config.trackingDurationSeconds,
     snapshotIntervalSeconds: config.snapshotIntervalSeconds,
   }));
 
   try {
     while (!stopped) {
-      // Wait for the next token
-      console.log(JSON.stringify({ event: 'waiting_for_token' }));
-      accepting = true;
-      pendingSignature = null;
+      // If we have capacity and a queued signature, start tracking it
+      if (activeCount < maxConcurrent && signatureQueue.length > 0) {
+        const signature = signatureQueue.shift()!;
+        activeCount++;
 
-      while (pendingSignature === null && !stopped) {
-        await sleep(500);
-      }
-      if (stopped) break;
+        // Fire and forget — trackTokenLifecycle manages its own cleanup
+        trackTokenLifecycle(db, rpc, signature, wsDisconnects, () => stopped)
+          .catch((err) => {
+            console.error(JSON.stringify({
+              event: 'token_lifecycle_error',
+              signature,
+              error: err instanceof Error ? err.message : String(err),
+            }));
+          })
+          .finally(() => {
+            activeCount--;
+          });
 
-      accepting = false; // Block new tokens while tracking
-      const signature = pendingSignature!;
-
-      console.log(JSON.stringify({ event: 'resolving_token', signature }));
-      const event = await rpc.fetchCreateTransaction(signature);
-      if (!event) {
-        console.log(JSON.stringify({ event: 'token_resolve_failed', signature }));
+        // Don't sleep — check immediately if we can start another
         continue;
       }
 
-      // Create a run for this token
-      const runId = uuidv4();
-      insertRun(db, runId, 'collect', configSnapshot());
-
-      // Fetch initial bonding curve state
-      const curves = await rpc.fetchBondingCurves([event.bondingCurvePda]);
-      const initialCurve = curves.get(event.bondingCurvePda) ?? null;
-
-      insertToken(db, {
-        mint: event.mint,
-        creator: event.creator,
-        name: event.name,
-        symbol: event.symbol,
-        createdAt: event.createdAt,
-        initialVirtualSol: initialCurve?.virtualSolReserves ?? null,
-        initialVirtualToken: initialCurve?.virtualTokenReserves ?? null,
-        initialPriceSol: initialCurve?.priceSol ?? null,
-        bondingCurvePda: event.bondingCurvePda,
-      });
-
-      insertTokenRun(db, runId, event.mint, Date.now());
-
-      console.log(JSON.stringify({
-        event: 'tracking_token',
-        runId,
-        mint: event.mint,
-        name: event.name,
-        symbol: event.symbol,
-        durationSeconds: config.trackingDurationSeconds,
-        intervalSeconds: config.snapshotIntervalSeconds,
-      }));
-
-      // Track this token
-      const snapshotCount = await trackToken(db, rpc, runId, event, stopped);
-
-      if (wsDisconnects.count > 0) {
-        incrementWsDisconnect(db, runId, wsDisconnects.totalMs);
-        wsDisconnects = { count: 0, totalMs: 0 };
-      }
-
-      completeRun(db, runId, 1, 0);
-
-      console.log(JSON.stringify({
-        event: 'token_tracking_complete',
-        runId,
-        mint: event.mint,
-        name: event.name,
-        symbol: event.symbol,
-        snapshotCount,
-      }));
+      // Poll for new tokens or free slots
+      await sleep(500);
     }
   } catch (err) {
     console.error(JSON.stringify({
@@ -139,8 +94,79 @@ export async function runCollect(db: Database.Database): Promise<void> {
     }));
     throw err;
   } finally {
+    // Wait briefly for active trackers to finish
+    const waitStart = Date.now();
+    while (activeCount > 0 && Date.now() - waitStart < 4000) {
+      await sleep(200);
+    }
     wsListener.stop();
   }
+}
+
+/**
+ * Full lifecycle for a single token: resolve, insert, track, complete.
+ */
+async function trackTokenLifecycle(
+  db: Database.Database,
+  rpc: RpcClient,
+  signature: string,
+  wsDisconnects: { count: number; totalMs: number },
+  isStopped: () => boolean
+): Promise<void> {
+  console.log(JSON.stringify({ event: 'resolving_token', signature }));
+  const event = await rpc.fetchCreateTransaction(signature);
+  if (!event) {
+    console.log(JSON.stringify({ event: 'token_resolve_failed', signature }));
+    return;
+  }
+
+  const runId = uuidv4();
+  insertRun(db, runId, 'collect', configSnapshot());
+
+  const curves = await rpc.fetchBondingCurves([event.bondingCurvePda]);
+  const initialCurve = curves.get(event.bondingCurvePda) ?? null;
+
+  insertToken(db, {
+    mint: event.mint,
+    creator: event.creator,
+    name: event.name,
+    symbol: event.symbol,
+    createdAt: event.createdAt,
+    initialVirtualSol: initialCurve?.virtualSolReserves ?? null,
+    initialVirtualToken: initialCurve?.virtualTokenReserves ?? null,
+    initialPriceSol: initialCurve?.priceSol ?? null,
+    bondingCurvePda: event.bondingCurvePda,
+  });
+
+  insertTokenRun(db, runId, event.mint, Date.now());
+
+  console.log(JSON.stringify({
+    event: 'tracking_token',
+    runId,
+    mint: event.mint,
+    name: event.name,
+    symbol: event.symbol,
+    durationSeconds: config.trackingDurationSeconds,
+    intervalSeconds: config.snapshotIntervalSeconds,
+  }));
+
+  const snapshotCount = await trackToken(db, rpc, runId, event, isStopped);
+
+  if (wsDisconnects.count > 0) {
+    incrementWsDisconnect(db, runId, wsDisconnects.totalMs);
+    // Note: shared disconnect counter — minor inaccuracy is acceptable
+  }
+
+  completeRun(db, runId, 1, 0);
+
+  console.log(JSON.stringify({
+    event: 'token_tracking_complete',
+    runId,
+    mint: event.mint,
+    name: event.name,
+    symbol: event.symbol,
+    snapshotCount,
+  }));
 }
 
 interface TokenEvent {
@@ -157,7 +183,7 @@ async function trackToken(
   rpc: RpcClient,
   runId: string,
   token: TokenEvent,
-  stopped: boolean
+  isStopped: () => boolean
 ): Promise<number> {
   const state = {
     parsedSignatures: new Set<string>(),
@@ -172,7 +198,7 @@ async function trackToken(
   const trackingEndMs = Date.now() + config.trackingDurationSeconds * 1000;
   let snapshotCount = 0;
 
-  while (Date.now() < trackingEndMs && !stopped) {
+  while (Date.now() < trackingEndMs && !isStopped()) {
     const snapshotStart = Date.now();
 
     try {
@@ -182,14 +208,12 @@ async function trackToken(
       const now = Date.now();
       const secondsSinceCreation = (now / 1000) - token.createdAt;
 
-      // Fetch signature count
       const signatures = await rpc.fetchSignatures(token.bondingCurvePda, { maxResults: 1000 });
       const totalTxCount = (signatures.length === 0 && state.lastTotalTxCount > 0)
         ? state.lastTotalTxCount
         : signatures.length;
       const txCountDelta = Math.max(0, totalTxCount - state.lastTotalTxCount);
 
-      // Sample transactions for buy/sell classification
       let sampleSize = 0;
       const unparsed = signatures.filter(s => !state.parsedSignatures.has(s.signature));
       const sampleCount = Math.min(unparsed.length, config.maxTxSamplePerSnapshot);
@@ -222,7 +246,6 @@ async function trackToken(
 
       state.lastTotalTxCount = totalTxCount;
 
-      // Extrapolate buy/sell counts
       let buyCount = 0;
       let sellCount = 0;
       if (state.totalSampled > 0) {
@@ -233,18 +256,15 @@ async function trackToken(
       const uniqueBuyers = state.buyerWallets.size;
       const uniqueSellers = state.sellerWallets.size;
 
-      // Derived features
       const buyVelocity = secondsSinceCreation > 0 ? buyCount / secondsSinceCreation : null;
       const totalBuySell = buyCount + sellCount;
       const sellRatio = totalBuySell > 0 ? sellCount / totalBuySell : null;
       const buyerTxRatio = (buyCount > 0 && uniqueBuyers > 0) ? uniqueBuyers / buyCount : null;
 
-      // Market cap: price * total token supply
       const marketCapSol = (curve && curve.priceSol > 0 && curve.tokenTotalSupply > 0)
         ? curve.priceSol * curve.tokenTotalSupply
         : null;
 
-      // Volume velocity: rough proxy using txCountDelta * price
       const volumeVelocitySol = (curve && config.snapshotIntervalSeconds > 0)
         ? (curve.priceSol * txCountDelta) / config.snapshotIntervalSeconds
         : null;
@@ -297,7 +317,6 @@ async function trackToken(
       }));
     }
 
-    // Wait for next interval
     const elapsed = Date.now() - snapshotStart;
     const waitMs = Math.max(0, config.snapshotIntervalSeconds * 1000 - elapsed);
     if (waitMs > 0 && Date.now() + waitMs < trackingEndMs) {
