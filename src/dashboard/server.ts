@@ -3,6 +3,7 @@ import Database from 'better-sqlite3';
 import { config } from '../config';
 import { handleApiRequest } from './api';
 import { getDashboardHtml } from './ui';
+import { log } from '../logger';
 
 /**
  * Start the dashboard HTTP server in the background.
@@ -39,10 +40,7 @@ export function startDashboard(db: Database.Database): Promise<http.Server> {
 
   return new Promise((resolve, reject) => {
     server.listen(config.dashboardPort, '0.0.0.0', () => {
-      console.log(JSON.stringify({
-        event: 'dashboard_started',
-        port: config.dashboardPort,
-      }));
+      log({ event: 'dashboard_started', port: config.dashboardPort });
       resolve(server);
     });
     server.on('error', reject);

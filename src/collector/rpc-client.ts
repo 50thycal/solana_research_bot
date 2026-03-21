@@ -3,6 +3,7 @@ import { deserializeBondingCurve, decodeBondingCurve, BondingCurveDecoded } from
 import { parseCreateFromAccountsAndData, PumpfunCreateEvent } from '../pumpfun/parse-create';
 import { PUMP_FUN_PROGRAM_ID } from '../pumpfun/constants';
 import { config } from '../config';
+import { logError } from '../logger';
 
 const PER_CALL_DELAY_MS = 50;
 const BATCH_SIZE = 100; // max accounts per getMultipleAccounts call
@@ -75,11 +76,11 @@ export class RpcClient {
 
       return null;
     } catch (err) {
-      console.error(JSON.stringify({
+      logError({
         event: 'rpc_fetch_create_error',
         signature,
         error: err instanceof Error ? err.message : String(err),
-      }));
+      });
       return null;
     }
   }
@@ -116,12 +117,12 @@ export class RpcClient {
           results.set(batch[j], decodeBondingCurve(raw));
         }
       } catch (err) {
-        console.error(JSON.stringify({
+        logError({
           event: 'rpc_fetch_curves_error',
           batchStart: i,
           batchSize: batch.length,
           error: err instanceof Error ? err.message : String(err),
-        }));
+        });
         // Fill this batch with nulls
         for (const pda of batch) {
           results.set(pda, null);
@@ -168,11 +169,11 @@ export class RpcClient {
         // Advance cursor to the oldest signature on this page for next iteration
         cursor = page[page.length - 1].signature;
       } catch (err) {
-        console.error(JSON.stringify({
+        logError({
           event: 'rpc_fetch_signatures_error',
           pda: bondingCurvePda,
           error: err instanceof Error ? err.message : String(err),
-        }));
+        });
         break; // Return whatever we have so far
       }
     } while (all.length < maxResults);
@@ -231,11 +232,11 @@ export class RpcClient {
         blockTime: tx.blockTime ?? null,
       };
     } catch (err) {
-      console.error(JSON.stringify({
+      logError({
         event: 'rpc_fetch_tx_error',
         signature,
         error: err instanceof Error ? err.message : String(err),
-      }));
+      });
       return null;
     }
   }

@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { v1Migration } from './v1';
 import { v2Migration } from './v2';
+import { log } from '../../logger';
 
 interface Migration {
   version: number;
@@ -36,11 +37,11 @@ export function runMigrations(db: Database.Database): void {
   if (pending.length === 0) return;
 
   for (const migration of pending) {
-    console.log(JSON.stringify({
+    log({
       event: 'migration_applying',
       version: migration.version,
       description: migration.description,
-    }));
+    });
 
     const applyMigration = db.transaction(() => {
       migration.up(db);
@@ -51,9 +52,9 @@ export function runMigrations(db: Database.Database): void {
 
     applyMigration();
 
-    console.log(JSON.stringify({
+    log({
       event: 'migration_applied',
       version: migration.version,
-    }));
+    });
   }
 }

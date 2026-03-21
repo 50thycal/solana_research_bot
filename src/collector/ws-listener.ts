@@ -1,5 +1,6 @@
 import WebSocket from 'ws';
 import { PUMP_FUN_PROGRAM_ID } from '../pumpfun/constants';
+import { log, logError } from '../logger';
 
 export interface WsListenerOptions {
   wsUrl: string;
@@ -64,15 +65,15 @@ export class WsListener {
   private connect(): void {
     if (this.stopped) return;
 
-    console.log(JSON.stringify({
+    log({
       event: 'ws_connecting',
       url: this.opts.wsUrl.replace(/api-key=.*/, 'api-key=***'),
-    }));
+    });
 
     this.ws = new WebSocket(this.opts.wsUrl);
 
     this.ws.on('open', () => {
-      console.log(JSON.stringify({ event: 'ws_connected' }));
+      log({ event: 'ws_connected' });
 
       if (this.disconnectedAt !== null) {
         const duration = Date.now() - this.disconnectedAt;
@@ -88,26 +89,26 @@ export class WsListener {
         const msg = JSON.parse(raw.toString());
         this.handleMessage(msg);
       } catch (err) {
-        console.error(JSON.stringify({
+        logError({
           event: 'ws_parse_error',
           error: err instanceof Error ? err.message : String(err),
-        }));
+        });
       }
     });
 
     this.ws.on('error', (err: Error) => {
-      console.error(JSON.stringify({
+      logError({
         event: 'ws_error',
         error: err.message,
-      }));
+      });
     });
 
     this.ws.on('close', (code: number, reason: Buffer) => {
-      console.log(JSON.stringify({
+      log({
         event: 'ws_disconnected',
         code,
         reason: reason.toString(),
-      }));
+      });
 
       this.subscriptionId = null;
       this.ws = null;
@@ -146,10 +147,10 @@ export class WsListener {
     // Subscription confirmation
     if (msg.id === 1 && msg.result !== undefined) {
       this.subscriptionId = msg.result;
-      console.log(JSON.stringify({
+      log({
         event: 'ws_subscribed',
         subscriptionId: this.subscriptionId,
-      }));
+      });
       return;
     }
 
@@ -172,10 +173,10 @@ export class WsListener {
     );
     if (!hasCreate) return;
 
-    console.log(JSON.stringify({
+    log({
       event: 'ws_create_detected',
       signature,
-    }));
+    });
 
     this.opts.onCreateSignature(signature);
   }
@@ -183,10 +184,10 @@ export class WsListener {
   private scheduleReconnect(): void {
     if (this.stopped || this.reconnectTimer) return;
 
-    console.log(JSON.stringify({
+    log({
       event: 'ws_reconnect_scheduled',
       delayMs: this.RECONNECT_DELAY_MS,
-    }));
+    });
 
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;

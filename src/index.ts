@@ -4,12 +4,13 @@ import { openDatabase, closeDatabase } from './db/init';
 import { markStaleRunsAsFailed } from './db/queries/runs';
 import { runCollect } from './collector/collect';
 import { startDashboard } from './dashboard/server';
+import { log, logError } from './logger';
 
 async function main(): Promise<void> {
-  console.log(JSON.stringify({
+  log({
     event: 'startup',
     timestamp: new Date().toISOString(),
-  }));
+  });
 
   // RESET_DB=true → wipe the database file before opening.
   // Set this env var in Railway dashboard, deploy, then remove it.
@@ -20,10 +21,10 @@ async function main(): Promise<void> {
         fs.unlinkSync(file);
       }
     }
-    console.log(JSON.stringify({
+    log({
       event: 'database_reset',
       message: 'Database wiped due to RESET_DB=true. Remove this env var now.',
-    }));
+    });
   }
 
   const db = openDatabase(config.dbPath);
@@ -37,16 +38,16 @@ async function main(): Promise<void> {
   try {
     const staleCount = markStaleRunsAsFailed(db);
     if (staleCount > 0) {
-      console.log(JSON.stringify({
+      log({
         event: 'crash_recovery',
         staleRunsMarkedFailed: staleCount,
-      }));
+      });
     }
   } catch (err) {
-    console.error(JSON.stringify({
+    logError({
       event: 'crash_recovery_error',
       error: err instanceof Error ? err.message : String(err),
-    }));
+    });
   }
 
   // Dashboard always starts — it's the main UI
@@ -54,20 +55,20 @@ async function main(): Promise<void> {
 
   // Collector starts only if Helius credentials are configured
   if (hasCollectConfig()) {
-    console.log(JSON.stringify({ event: 'collector_starting' }));
+    log({ event: 'collector_starting' });
     try {
       await runCollect(db);
     } catch (err) {
-      console.error(JSON.stringify({
+      logError({
         event: 'collector_error',
         error: err instanceof Error ? err.message : String(err),
-      }));
+      });
     }
   } else {
-    console.log(JSON.stringify({
+    log({
       event: 'collector_skipped',
       reason: 'Helius credentials not configured. Dashboard-only mode.',
-    }));
+    });
     // Keep the process alive for the dashboard
     await new Promise<void>((resolve) => {
       process.on('SIGTERM', () => {
@@ -82,14 +83,14 @@ async function main(): Promise<void> {
 }
 
 process.on('SIGTERM', () => {
-  console.log(JSON.stringify({ event: 'sigterm_received' }));
+  log({ event: 'sigterm_received' });
   process.exit(0);
 });
 
 main().catch((err) => {
-  console.error(JSON.stringify({
+  logError({
     event: 'fatal_error',
     error: err instanceof Error ? err.message : String(err),
-  }));
+  });
   process.exit(1);
 });

@@ -8,6 +8,7 @@ import { insertSnapshot, SnapshotInsert } from '../db/queries/snapshots';
 import { WsListener } from './ws-listener';
 import { RpcClient } from './rpc-client';
 import { classifyTransaction, ClassifiedTx } from '../pumpfun/classify-tx';
+import { log, logError } from '../logger';
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -25,7 +26,7 @@ export async function runCollect(db: Database.Database): Promise<void> {
 
   process.removeAllListeners('SIGTERM');
   process.on('SIGTERM', () => {
-    console.log(JSON.stringify({ event: 'sigterm_handling' }));
+    log({ event: 'sigterm_handling' });
     stopped = true;
     setTimeout(() => process.exit(0), 5000);
   });
@@ -43,7 +44,7 @@ export async function runCollect(db: Database.Database): Promise<void> {
       latestSignature = signature;
     },
     onDisconnect: () => {
-      console.log(JSON.stringify({ event: 'ws_disconnect' }));
+      log({ event: 'ws_disconnect' });
     },
     onReconnect: (disconnectDurationMs: number) => {
       wsDisconnects.count++;
@@ -52,12 +53,12 @@ export async function runCollect(db: Database.Database): Promise<void> {
   });
 
   wsListener.start();
-  console.log(JSON.stringify({
+  log({
     event: 'collect_started',
     maxConcurrentTokens: maxConcurrent,
     trackingDurationSeconds: config.trackingDurationSeconds,
     snapshotIntervalSeconds: config.snapshotIntervalSeconds,
-  }));
+  });
 
   try {
     while (!stopped) {
@@ -70,11 +71,11 @@ export async function runCollect(db: Database.Database): Promise<void> {
         // Fire and forget — trackTokenLifecycle manages its own cleanup
         trackTokenLifecycle(db, rpc, signature, wsDisconnects, () => stopped)
           .catch((err) => {
-            console.error(JSON.stringify({
+            logError({
               event: 'token_lifecycle_error',
               signature,
               error: err instanceof Error ? err.message : String(err),
-            }));
+            });
           })
           .finally(() => {
             activeCount--;
@@ -88,10 +89,10 @@ export async function runCollect(db: Database.Database): Promise<void> {
       await sleep(500);
     }
   } catch (err) {
-    console.error(JSON.stringify({
+    logError({
       event: 'collect_error',
       error: err instanceof Error ? err.message : String(err),
-    }));
+    });
     throw err;
   } finally {
     // Wait briefly for active trackers to finish
@@ -113,7 +114,7 @@ async function trackTokenLifecycle(
   wsDisconnects: { count: number; totalMs: number },
   isStopped: () => boolean
 ): Promise<void> {
-  console.log(JSON.stringify({ event: 'resolving_token', signature }));
+  log({ event: 'resolving_token', signature });
 
   // The WebSocket fires almost instantly, but the RPC getTransaction endpoint
   // needs time to index the tx. Wait a bit before the first attempt, then retry
@@ -125,12 +126,12 @@ async function trackTokenLifecycle(
     event = await rpc.fetchCreateTransaction(signature);
     if (event) break;
     if (attempt < 4) {
-      console.log(JSON.stringify({ event: 'token_resolve_retry', signature, attempt }));
+      log({ event: 'token_resolve_retry', signature, attempt });
       await sleep((attempt + 1) * 1000); // 2s, 3s, 4s backoff
     }
   }
   if (!event) {
-    console.log(JSON.stringify({ event: 'token_resolve_failed', signature }));
+    log({ event: 'token_resolve_failed', signature });
     return;
   }
 
@@ -154,7 +155,7 @@ async function trackTokenLifecycle(
 
   insertTokenRun(db, runId, event.mint, Date.now());
 
-  console.log(JSON.stringify({
+  log({
     event: 'tracking_token',
     runId,
     mint: event.mint,
@@ -162,7 +163,7 @@ async function trackTokenLifecycle(
     symbol: event.symbol,
     durationSeconds: config.trackingDurationSeconds,
     intervalSeconds: config.snapshotIntervalSeconds,
-  }));
+  });
 
   const snapshotCount = await trackToken(db, rpc, runId, event, isStopped);
 
@@ -173,14 +174,14 @@ async function trackTokenLifecycle(
 
   completeRun(db, runId, 1, 0);
 
-  console.log(JSON.stringify({
+  log({
     event: 'token_tracking_complete',
     runId,
     mint: event.mint,
     name: event.name,
     symbol: event.symbol,
     snapshotCount,
-  }));
+  });
 }
 
 interface TokenEvent {
@@ -313,7 +314,7 @@ async function trackToken(
       insertSnapshot(db, snapshot);
       snapshotCount++;
 
-      console.log(JSON.stringify({
+      log({
         event: 'snapshot',
         mint: token.mint,
         snapshotNum: snapshotCount,
@@ -322,13 +323,13 @@ async function trackToken(
         marketCapSol: marketCapSol != null ? Math.round(marketCapSol * 1000) / 1000 : null,
         totalTxCount,
         txCountDelta,
-      }));
+      });
     } catch (err) {
-      console.error(JSON.stringify({
+      logError({
         event: 'snapshot_error',
         mint: token.mint,
         error: err instanceof Error ? err.message : String(err),
-      }));
+      });
     }
 
     const elapsed = Date.now() - snapshotStart;

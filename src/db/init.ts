@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { runMigrations } from './migrations/runner';
+import { logError } from '../logger';
 
 /**
  * Open SQLite database with WAL mode and recommended pragmas.
@@ -35,10 +36,10 @@ export function closeDatabase(db: Database.Database): void {
   try {
     db.pragma('wal_checkpoint(TRUNCATE)');
   } catch (err) {
-    console.error(JSON.stringify({
+    logError({
       event: 'wal_checkpoint_error',
       error: err instanceof Error ? err.message : String(err),
-    }));
+    });
   }
   db.close();
 }
