@@ -1,5 +1,5 @@
 import { PublicKey } from '@solana/web3.js';
-import { PUMP_FUN_PROGRAM_ID } from './constants';
+import { PUMP_FUN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from './constants';
 import { deriveBondingCurvePda } from './pda';
 
 export interface PumpfunCreateEvent {
@@ -13,19 +13,21 @@ export interface PumpfunCreateEvent {
 }
 
 /**
- * Known discriminator for the pump.fun "create" instruction.
- * First 8 bytes of the instruction data for the Create variant.
- * This is the anchor discriminator: sha256("global:create")[0..8]
+ * Known discriminator for the pump.fun "create" instruction (legacy SPL Token).
+ * Anchor discriminator: sha256("global:create")[0..8]
  */
 const CREATE_DISCRIMINATOR = Buffer.from([24, 30, 200, 40, 5, 28, 7, 119]);
 
 /**
- * Parse a pump.fun Create instruction from a transaction's logs or instruction data.
+ * Discriminator for the pump.fun "create_v2" instruction (Token-2022).
+ * Anchor discriminator: sha256("global:create_v2")[0..8]
+ */
+const CREATE_V2_DISCRIMINATOR = Buffer.from([214, 144, 76, 236, 95, 139, 49, 180]);
+
+/**
+ * Parse a pump.fun Create or CreateV2 instruction from transaction data.
  *
- * For the WebSocket logsSubscribe approach, we parse the transaction accounts
- * and instruction data from the transaction notification.
- *
- * Account layout for pump.fun Create instruction:
+ * Account layout for pump.fun Create (legacy SPL Token):
  *   [0] mint
  *   [1] mintAuthority
  *   [2] bondingCurve
@@ -35,6 +37,17 @@ const CREATE_DISCRIMINATOR = Buffer.from([24, 30, 200, 40, 5, 28, 7, 119]);
  *   [6] metadata
  *   [7] user (creator/signer)
  *   [8..] system accounts
+ *
+ * Account layout for pump.fun CreateV2 (Token-2022):
+ *   [0] mint
+ *   [1] mintAuthority
+ *   [2] bondingCurve
+ *   [3] associatedBondingCurve
+ *   [4] global
+ *   [5] user (creator/signer)    ← moved here
+ *   [6] systemProgram
+ *   [7] token2022Program         ← TOKEN_2022_PROGRAM_ID
+ *   [8..] other accounts
  *
  * Instruction data layout (after 8-byte discriminator):
  *   [8..12]  name_len (u32 LE)
@@ -56,17 +69,28 @@ export function parseCreateFromAccountsAndData(
     return null;
   }
 
-  // Check discriminator
+  // Check discriminator — support both Create and CreateV2
   if (instructionData.length < 8) return null;
   const disc = instructionData.subarray(0, 8);
-  if (!disc.equals(CREATE_DISCRIMINATOR)) return null;
+  const isCreate = disc.equals(CREATE_DISCRIMINATOR);
+  const isCreateV2 = disc.equals(CREATE_V2_DISCRIMINATOR);
+  if (!isCreate && !isCreateV2) return null;
 
   // Need at least 8 accounts
   if (instructionAccountIndices.length < 8) return null;
 
   const mint = accountKeys[instructionAccountIndices[0]];
   const bondingCurve = accountKeys[instructionAccountIndices[2]];
-  const creator = accountKeys[instructionAccountIndices[7]];
+
+  // Creator position differs between Create and CreateV2.
+  // CreateV2: accounts[7] is TOKEN_2022_PROGRAM_ID, creator is at accounts[5]
+  // Create:   accounts[7] is the creator
+  let creator: string;
+  if (isCreateV2) {
+    creator = accountKeys[instructionAccountIndices[5]];
+  } else {
+    creator = accountKeys[instructionAccountIndices[7]];
+  }
 
   if (!mint || !bondingCurve || !creator) return null;
 
