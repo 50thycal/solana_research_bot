@@ -30,19 +30,17 @@ export async function runCollect(db: Database.Database): Promise<void> {
     setTimeout(() => process.exit(0), 5000);
   });
 
-  // Queue of pending signatures (FIFO). WS pushes here, main loop pops.
-  const signatureQueue: string[] = [];
+  // Latest signature seen — always overwritten so we only ever track
+  // a token from its moment of creation, never a stale queued one.
+  let latestSignature: string | null = null;
   let activeCount = 0;
   let wsDisconnects = { count: 0, totalMs: 0 };
 
   const wsListener = new WsListener({
     wsUrl: config.heliusWsUrl,
     onCreateSignature: (signature: string) => {
-      // Keep only the freshest signatures — evict oldest when full
-      if (signatureQueue.length >= maxConcurrent) {
-        signatureQueue.shift(); // drop oldest
-      }
-      signatureQueue.push(signature);
+      // Always overwrite — we only want the freshest token
+      latestSignature = signature;
     },
     onDisconnect: () => {
       console.log(JSON.stringify({ event: 'ws_disconnect' }));
@@ -63,9 +61,10 @@ export async function runCollect(db: Database.Database): Promise<void> {
 
   try {
     while (!stopped) {
-      // If we have capacity and a queued signature, start tracking it
-      if (activeCount < maxConcurrent && signatureQueue.length > 0) {
-        const signature = signatureQueue.shift()!;
+      // If we have a free slot and a fresh token, grab it immediately
+      if (activeCount < maxConcurrent && latestSignature !== null) {
+        const signature = latestSignature;
+        latestSignature = null; // consumed — next slot gets the next fresh token
         activeCount++;
 
         // Fire and forget — trackTokenLifecycle manages its own cleanup
