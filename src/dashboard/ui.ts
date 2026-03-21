@@ -712,6 +712,8 @@ export function getDashboardHtml(): string {
       <div class="analysis-controls">
         <label>Checkpoint:
           <select id="checkpointSelect">
+            <option value="5">5s</option>
+            <option value="10">10s</option>
             <option value="15">15s</option>
             <option value="30" selected>30s</option>
             <option value="45">45s</option>
