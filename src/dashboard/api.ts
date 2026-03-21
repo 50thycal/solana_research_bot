@@ -8,6 +8,7 @@ import {
   buildScoringModel,
   scoreToken,
   backtestModel,
+  computeScoreTrajectory,
   type TimeRange,
 } from '../analysis';
 
@@ -52,6 +53,10 @@ export function handleApiRequest(
 
     if (url.pathname === '/api/analysis/model') {
       return getModel(db, url, res);
+    }
+
+    if (url.pathname === '/api/analysis/trajectory') {
+      return getTrajectory(db, url, res);
     }
 
     errorResponse(res, 'Not found', 404);
@@ -409,4 +414,25 @@ function getModel(db: Database.Database, url: URL, res: http.ServerResponse): vo
       }, {} as Record<string, number>),
     },
   });
+}
+
+/**
+ * GET /api/analysis/trajectory?mint=<mint>
+ * Score a token across all checkpoints (5,10,15,30,45,60,90,120s).
+ * Shows how the score evolves over time — rising = growing conviction.
+ * The trading bot uses this to decide the optimal entry point.
+ */
+function getTrajectory(db: Database.Database, url: URL, res: http.ServerResponse): void {
+  const mint = url.searchParams.get('mint');
+  if (!mint) {
+    return errorResponse(res, 'mint parameter required');
+  }
+
+  const trajectory = computeScoreTrajectory(db, mint);
+
+  if (trajectory.checkpoints.length === 0) {
+    return errorResponse(res, `No checkpoint data found for token ${mint}`, 404);
+  }
+
+  jsonResponse(res, trajectory);
 }

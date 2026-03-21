@@ -60,7 +60,7 @@ async function main() {
 
     // Determine checkpoints to analyze
     const checkpoints = multiCheckpoint
-      ? [15, 30, 45, 60, 90, 120]
+      ? [5, 10, 15, 30, 45, 60, 90, 120]
       : [parseInt(args.find((a: string) => !a.startsWith('--')) ?? '30', 10)];
 
     const allReports: BacktestReport[] = [];

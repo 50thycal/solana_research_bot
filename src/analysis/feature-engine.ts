@@ -29,6 +29,10 @@ export interface TokenFeatureVector {
   buyAcceleration: number;  // buy velocity change over window
   txBurst: number;          // max tx_count_delta in window
   holderConcentration: number; // unique_sellers / sell_count — seller concentration (0 = no sells, lower = concentrated selling)
+
+  // Momentum freshness features
+  timeSincePeakVelocity: number; // seconds between peak buy_velocity and checkpoint — shorter = momentum is live
+  buyVelocityTrend: number;      // slope of buy_velocity across last 2-3 snapshots — positive = accelerating, negative = decelerating
 }
 
 /** A token with features + outcome label */
@@ -137,12 +141,56 @@ export function extractFeatureVectors(
 
   const burstMap = new Map(burstRows.map((r: any) => [r.mint, r.max_burst ?? 0]));
 
+  // For momentum freshness features, get all snapshots up to checkpoint for each token
+  const velocityRows = db.prepare(`
+    SELECT mint, buy_velocity, seconds_since_creation
+    FROM snapshots
+    WHERE seconds_since_creation <= ? AND seconds_since_creation >= 0
+      AND buy_velocity IS NOT NULL
+    ORDER BY mint, seconds_since_creation ASC
+  `).all(checkpointSeconds) as any[];
+
+  // Group by mint
+  const velocityByMint = new Map<string, { velocity: number; seconds: number }[]>();
+  for (const r of velocityRows) {
+    if (!velocityByMint.has(r.mint)) velocityByMint.set(r.mint, []);
+    velocityByMint.get(r.mint)!.push({ velocity: r.buy_velocity, seconds: r.seconds_since_creation });
+  }
+
   return rows.map((row: any) => {
     const prev = prevMap.get(row.mint);
     const initialPrice = row.initial_price_sol ?? row.price_sol ?? 0;
     const currentPrice = row.price_sol ?? 0;
     const prevPrice = prev?.price_sol ?? currentPrice;
     const prevBuyVelocity = prev?.buy_velocity ?? 0;
+
+    // Compute timeSincePeakVelocity and buyVelocityTrend
+    const velocityHistory = velocityByMint.get(row.mint) ?? [];
+    let timeSincePeakVelocity = checkpointSeconds; // default: peak was at start (worst case)
+    let buyVelocityTrend = 0;
+
+    if (velocityHistory.length > 0) {
+      // Find when peak velocity occurred
+      let peakIdx = 0;
+      for (let i = 1; i < velocityHistory.length; i++) {
+        if (velocityHistory[i].velocity > velocityHistory[peakIdx].velocity) {
+          peakIdx = i;
+        }
+      }
+      timeSincePeakVelocity = checkpointSeconds - velocityHistory[peakIdx].seconds;
+
+      // Compute velocity trend from last 2-3 snapshots leading up to checkpoint
+      const recent = velocityHistory.slice(-3);
+      if (recent.length >= 2) {
+        // Simple linear slope: (last - first) / time_span
+        const first = recent[0];
+        const last = recent[recent.length - 1];
+        const timeDiff = last.seconds - first.seconds;
+        buyVelocityTrend = timeDiff > 0
+          ? (last.velocity - first.velocity) / timeDiff
+          : 0;
+      }
+    }
 
     return {
       mint: row.mint,
@@ -171,6 +219,10 @@ export function extractFeatureVectors(
       holderConcentration: (row.sell_count ?? 0) > 0
         ? (row.unique_sellers ?? 0) / (row.sell_count ?? 0)
         : 0,
+
+      // Momentum freshness
+      timeSincePeakVelocity,
+      buyVelocityTrend,
     };
   });
 }
@@ -377,6 +429,7 @@ export function computeCorrelations(dataset: LabeledToken[]): FeatureCorrelation
     'buyCount', 'sellCount', 'uniqueBuyers', 'uniqueSellers',
     'buyVelocity', 'sellRatio', 'buyerTxRatio', 'marketCapSol',
     'priceAcceleration', 'buyAcceleration', 'txBurst', 'holderConcentration',
+    'timeSincePeakVelocity', 'buyVelocityTrend',
   ];
 
   const results: FeatureCorrelation[] = [];

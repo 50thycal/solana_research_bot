@@ -1,4 +1,12 @@
-import { TokenFeatureVector, LabeledToken, FeatureCorrelation } from './feature-engine';
+import Database from 'better-sqlite3';
+import {
+  TokenFeatureVector,
+  LabeledToken,
+  FeatureCorrelation,
+  extractFeatureVectors,
+  buildFullDataset,
+  computeCorrelations,
+} from './feature-engine';
 
 /**
  * Scoring Model — builds a weighted scoring function from feature correlations
@@ -149,6 +157,90 @@ export function scoreToken(
     score: Math.round(totalScore * 100) / 100,
     featureScores,
     signal,
+  };
+}
+
+/** Score trajectory across multiple checkpoints for a single token */
+export interface ScoreTrajectory {
+  mint: string;
+  checkpoints: {
+    seconds: number;
+    score: number;
+    signal: TokenScore['signal'];
+    sampleCount: number;
+    baseRate2x: number;
+  }[];
+  /** Score change from first to last checkpoint (positive = improving) */
+  scoreSlope: number;
+  /** Is the score consistently rising across checkpoints? */
+  rising: boolean;
+  /** Best checkpoint (highest score) */
+  peakCheckpoint: number;
+  peakScore: number;
+}
+
+/**
+ * Compute score trajectory for a token across multiple checkpoints.
+ * Builds a separate model at each checkpoint and scores the token,
+ * showing how confidence evolves over time.
+ */
+export function computeScoreTrajectory(
+  db: Database.Database,
+  mint: string,
+  checkpoints: number[] = [5, 10, 15, 30, 45, 60, 90, 120],
+): ScoreTrajectory {
+  const results: ScoreTrajectory['checkpoints'] = [];
+
+  for (const cp of checkpoints) {
+    const dataset = buildFullDataset(db, cp);
+    if (dataset.length < 5) continue;
+
+    const correlations = computeCorrelations(dataset);
+    const model = buildScoringModel(correlations, dataset, cp);
+
+    const features = extractFeatureVectors(db, cp);
+    const tokenFeatures = features.find(f => f.mint === mint);
+    if (!tokenFeatures) continue;
+
+    const score = scoreToken(model, tokenFeatures);
+    results.push({
+      seconds: cp,
+      score: score.score,
+      signal: score.signal,
+      sampleCount: model.sampleCount,
+      baseRate2x: model.baseRate2x,
+    });
+  }
+
+  // Compute trajectory metrics
+  let scoreSlope = 0;
+  let rising = false;
+  let peakCheckpoint = 0;
+  let peakScore = 0;
+
+  if (results.length >= 2) {
+    const first = results[0];
+    const last = results[results.length - 1];
+    const timeDiff = last.seconds - first.seconds;
+    scoreSlope = timeDiff > 0 ? (last.score - first.score) / timeDiff : 0;
+
+    // Check if rising: each score >= previous
+    rising = results.every((r, i) => i === 0 || r.score >= results[i - 1].score);
+  }
+
+  if (results.length > 0) {
+    const peak = results.reduce((best, r) => r.score > best.score ? r : best, results[0]);
+    peakCheckpoint = peak.seconds;
+    peakScore = peak.score;
+  }
+
+  return {
+    mint,
+    checkpoints: results,
+    scoreSlope,
+    rising,
+    peakCheckpoint,
+    peakScore,
   };
 }
 
