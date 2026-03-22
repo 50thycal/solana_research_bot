@@ -28,7 +28,7 @@ export interface TokenFeatureVector {
   priceAcceleration: number; // price change rate of change
   buyAcceleration: number;  // buy velocity change over window
   txBurst: number;          // max tx_count_delta in window
-  holderConcentration: number; // unique_sellers / sell_count — seller concentration (0 = no sells, lower = concentrated selling)
+  sellDistribution: number; // unique_sellers / sell_count — seller concentration (0 = no sells, lower = concentrated selling; <1 = same sellers repeatedly selling)
 
   // Momentum freshness features
   timeSincePeakVelocity: number; // seconds between peak buy_velocity and checkpoint — shorter = momentum is live
@@ -45,7 +45,7 @@ export interface LabeledToken {
     maxDrawdownPct: number;
     finalGainPct: number;
     maxPriceSeconds: number;
-    category: 'moon' | 'pump_dump' | 'rug' | 'slow_bleed' | 'flat';
+    category: 'moon' | 'pump_dump' | 'pump_then_dump' | 'rug' | 'slow_bleed' | 'flat';
   };
 }
 
@@ -216,7 +216,7 @@ export function extractFeatureVectors(
         : 0,
       buyAcceleration: (row.buy_velocity ?? 0) - prevBuyVelocity,
       txBurst: burstMap.get(row.mint) ?? 0,
-      holderConcentration: (row.sell_count ?? 0) > 0
+      sellDistribution: (row.sell_count ?? 0) > 0
         ? (row.unique_sellers ?? 0) / (row.sell_count ?? 0)
         : 0,
 
@@ -276,6 +276,7 @@ export function buildLabeledDataset(
     let category: LabeledToken['outcome']['category'] = 'flat';
     if (maxGain >= 100 && finalGain >= 50) category = 'moon';
     else if (maxGain >= 50 && finalGain <= 0) category = 'pump_dump';
+    else if (maxGain > 30 && finalGain < maxGain * 0.5) category = 'pump_then_dump';
     else if (maxDrawdown <= -80) category = 'rug';
     else if (maxGain < 50 && finalGain < -30) category = 'slow_bleed';
 
@@ -344,6 +345,7 @@ export function buildFullDataset(
       let category: LabeledToken['outcome']['category'] = 'flat';
       if (maxGain >= 100 && finalGain >= 50) category = 'moon';
       else if (maxGain >= 50 && finalGain <= 0) category = 'pump_dump';
+      else if (maxGain > 30 && finalGain < maxGain * 0.5) category = 'pump_then_dump';
       else if (maxDrawdown <= -80) category = 'rug';
       else if (maxGain < 50 && finalGain < -30) category = 'slow_bleed';
 
@@ -396,6 +398,7 @@ export function buildFullDataset(
       let category: LabeledToken['outcome']['category'] = 'flat';
       if (maxGain >= 100 && finalGain >= 50) category = 'moon';
       else if (maxGain >= 50 && finalGain <= 0) category = 'pump_dump';
+      else if (maxGain > 30 && finalGain < maxGain * 0.5) category = 'pump_then_dump';
       else if (maxDrawdown <= -80) category = 'rug';
       else if (maxGain < 50 && finalGain < -30) category = 'slow_bleed';
 
@@ -428,7 +431,7 @@ export function computeCorrelations(dataset: LabeledToken[]): FeatureCorrelation
     'priceSol', 'priceChangeFromInitial', 'realSolReserves', 'totalTxCount',
     'buyCount', 'sellCount', 'uniqueBuyers', 'uniqueSellers',
     'buyVelocity', 'sellRatio', 'buyerTxRatio', 'marketCapSol',
-    'priceAcceleration', 'buyAcceleration', 'txBurst', 'holderConcentration',
+    'priceAcceleration', 'buyAcceleration', 'txBurst', 'sellDistribution',
     'timeSincePeakVelocity', 'buyVelocityTrend',
   ];
 
