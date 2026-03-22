@@ -225,11 +225,12 @@ async function trackToken(
   const state = {
     parsedSignatures: new Set<string>(),
     buyerWallets: new Set<string>(),
-    sellerWallets: new Set<string>(),
+    sellerWallets: new Map<string, number>(), // wallet -> sell count
     sampledBuys: 0,
     sampledSells: 0,
     totalSampled: 0,
     lastTotalTxCount: 0,
+    lastSellVelocity: null as number | null,
   };
 
   const trackingEndMs = Date.now() + config.trackingDurationSeconds * 1000;
@@ -273,7 +274,9 @@ async function trackToken(
             if (tx.wallet) state.buyerWallets.add(tx.wallet);
           } else if (tx.classification === 'sell') {
             state.sampledSells++;
-            if (tx.wallet) state.sellerWallets.add(tx.wallet);
+            if (tx.wallet) {
+              state.sellerWallets.set(tx.wallet, (state.sellerWallets.get(tx.wallet) ?? 0) + 1);
+            }
           }
         }
 
@@ -293,8 +296,28 @@ async function trackToken(
       const uniqueBuyers = state.buyerWallets.size;
       const uniqueSellers = state.sellerWallets.size;
 
+      // Sell pressure metrics
+      const sellVelocity = secondsSinceCreation > 0 ? sellCount / secondsSinceCreation : null;
+      const sellAcceleration = (sellVelocity !== null && state.lastSellVelocity !== null)
+        ? sellVelocity - state.lastSellVelocity
+        : null;
+      state.lastSellVelocity = sellVelocity;
+
+      // Top-3 seller concentration: fraction of sell txs attributed to top 3 wallets
+      let topSellerConcentration: number | null = null;
+      if (sellCount > 0 && state.sellerWallets.size > 0) {
+        const sortedSellCounts = Array.from(state.sellerWallets.values()).sort((a, b) => b - a);
+        const top3Sum = sortedSellCounts.slice(0, 3).reduce((a, b) => a + b, 0);
+        const totalSampledSells = sortedSellCounts.reduce((a, b) => a + b, 0);
+        topSellerConcentration = totalSampledSells > 0 ? top3Sum / totalSampledSells : null;
+      }
+
+      // Creator selling check
+      const creatorSelling = state.sellerWallets.has(token.creator) ? 1 : 0;
+
       const buyVelocity = secondsSinceCreation > 0 ? buyCount / secondsSinceCreation : null;
       const totalBuySell = buyCount + sellCount;
+
       const sellRatio = totalBuySell > 0 ? sellCount / totalBuySell : null;
       const buyerTxRatio = (buyCount > 0 && uniqueBuyers > 0) ? uniqueBuyers / buyCount : null;
 
@@ -331,6 +354,10 @@ async function trackToken(
         buyerTxRatio,
         sellRatio,
         marketCapSol,
+        sellVelocity,
+        sellAcceleration,
+        topSellerConcentration,
+        creatorSelling,
       };
 
       insertSnapshot(db, snapshot);

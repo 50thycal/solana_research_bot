@@ -26,6 +26,10 @@ export interface SnapshotRow {
   buyer_tx_ratio: number | null;
   sell_ratio: number | null;
   market_cap_sol: number | null;
+  sell_velocity: number | null;
+  sell_acceleration: number | null;
+  top_seller_concentration: number | null;
+  creator_selling: number | null;
 }
 
 export interface SnapshotInsert {
@@ -53,6 +57,10 @@ export interface SnapshotInsert {
   buyerTxRatio: number | null;
   sellRatio: number | null;
   marketCapSol: number | null;
+  sellVelocity: number | null;
+  sellAcceleration: number | null;
+  topSellerConcentration: number | null;
+  creatorSelling: number | null;
 }
 
 /** Insert a snapshot row. Returns the inserted row's id. */
@@ -65,8 +73,9 @@ export function insertSnapshot(db: Database.Database, s: SnapshotInsert): number
       buy_count, sell_count, unique_buyers, unique_sellers,
       sample_size, sample_total, sample_method,
       buy_velocity, volume_velocity_sol, buyer_tx_ratio, sell_ratio,
-      market_cap_sol
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      market_cap_sol,
+      sell_velocity, sell_acceleration, top_seller_concentration, creator_selling
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     s.mint, s.runId, s.snapshotAt, s.secondsSinceCreation, s.phase,
     s.virtualSolReserves, s.virtualTokenReserves, s.realSolReserves, s.realTokenReserves, s.priceSol,
@@ -74,7 +83,8 @@ export function insertSnapshot(db: Database.Database, s: SnapshotInsert): number
     s.buyCount, s.sellCount, s.uniqueBuyers, s.uniqueSellers,
     s.sampleSize, s.sampleTotal, s.sampleMethod,
     s.buyVelocity, s.volumeVelocitySol, s.buyerTxRatio, s.sellRatio,
-    s.marketCapSol
+    s.marketCapSol,
+    s.sellVelocity, s.sellAcceleration, s.topSellerConcentration, s.creatorSelling
   );
   return Number(result.lastInsertRowid);
 }

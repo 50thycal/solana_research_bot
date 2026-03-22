@@ -606,6 +606,7 @@ export function getDashboardHtml(): string {
     }
     .cat-moon { background: rgba(0, 230, 118, 0.15); color: #00e676; }
     .cat-pump_dump { background: rgba(255, 152, 0, 0.15); color: #ff9800; }
+    .cat-pump_then_dump { background: rgba(255, 111, 0, 0.15); color: #ff6f00; }
     .cat-rug { background: rgba(255, 82, 82, 0.15); color: #ff5252; }
     .cat-slow_bleed { background: rgba(255, 82, 82, 0.1); color: #ef9a9a; }
     .cat-flat { background: rgba(136, 136, 170, 0.1); color: #8888aa; }
@@ -1420,7 +1421,7 @@ export function getDashboardHtml(): string {
         if (best.categoryBreakdown && Object.keys(best.categoryBreakdown).length > 0) {
           html += '<div style="margin-top:16px"><div style="font-size:11px;color:#6666aa;text-transform:uppercase;margin-bottom:8px">Category Breakdown (at best threshold)</div>';
           html += '<div class="category-grid">';
-          var catOrder = ['moon', 'pump_dump', 'rug', 'slow_bleed', 'flat'];
+          var catOrder = ['moon', 'pump_dump', 'pump_then_dump', 'rug', 'slow_bleed', 'flat'];
           catOrder.forEach(function(cat) {
             var count = best.categoryBreakdown[cat] || 0;
             if (count > 0) {
@@ -1522,7 +1523,7 @@ export function getDashboardHtml(): string {
 
         // Category distribution chart - show at best threshold
         var catLabels = Object.keys(best.categoryBreakdown || {});
-        var catColors = { moon: '#00e676', pump_dump: '#ff9800', rug: '#ff5252', slow_bleed: '#ef9a9a', flat: '#8888aa' };
+        var catColors = { moon: '#00e676', pump_dump: '#ff9800', pump_then_dump: '#ff6f00', rug: '#ff5252', slow_bleed: '#ef9a9a', flat: '#8888aa' };
         if (catLabels.length > 0) {
           analysisCharts.push(new Chart(document.getElementById('categoryChart'), {
             type: 'doughnut',

@@ -28,11 +28,17 @@ export interface TokenFeatureVector {
   priceAcceleration: number; // price change rate of change
   buyAcceleration: number;  // buy velocity change over window
   txBurst: number;          // max tx_count_delta in window
-  holderConcentration: number; // unique_sellers / sell_count — seller concentration (0 = no sells, lower = concentrated selling)
+  sellDistribution: number; // unique_sellers / sell_count — seller concentration (0 = no sells, lower = concentrated selling)
 
   // Momentum freshness features
   timeSincePeakVelocity: number; // seconds between peak buy_velocity and checkpoint — shorter = momentum is live
   buyVelocityTrend: number;      // slope of buy_velocity across last 2-3 snapshots — positive = accelerating, negative = decelerating
+
+  // Sell-pressure features
+  sellVelocity: number;             // sells per second since creation
+  sellAcceleration: number;         // rate of change of sell velocity vs previous snapshot
+  topSellerConcentration: number;   // fraction of sell txs from top 3 wallets
+  volumeVelocitySol: number;        // SOL volume per second in the snapshot interval
 }
 
 /** A token with features + outcome label */
@@ -45,7 +51,7 @@ export interface LabeledToken {
     maxDrawdownPct: number;
     finalGainPct: number;
     maxPriceSeconds: number;
-    category: 'moon' | 'pump_dump' | 'rug' | 'slow_bleed' | 'flat';
+    category: 'moon' | 'pump_dump' | 'pump_then_dump' | 'rug' | 'slow_bleed' | 'flat';
   };
 }
 
@@ -216,13 +222,19 @@ export function extractFeatureVectors(
         : 0,
       buyAcceleration: (row.buy_velocity ?? 0) - prevBuyVelocity,
       txBurst: burstMap.get(row.mint) ?? 0,
-      holderConcentration: (row.sell_count ?? 0) > 0
+      sellDistribution: (row.sell_count ?? 0) > 0
         ? (row.unique_sellers ?? 0) / (row.sell_count ?? 0)
         : 0,
 
       // Momentum freshness
       timeSincePeakVelocity,
       buyVelocityTrend,
+
+      // Sell-pressure
+      sellVelocity: row.sell_velocity ?? 0,
+      sellAcceleration: row.sell_acceleration ?? 0,
+      topSellerConcentration: row.top_seller_concentration ?? 0,
+      volumeVelocitySol: row.volume_velocity_sol ?? 0,
     };
   });
 }
@@ -276,6 +288,7 @@ export function buildLabeledDataset(
     let category: LabeledToken['outcome']['category'] = 'flat';
     if (maxGain >= 100 && finalGain >= 50) category = 'moon';
     else if (maxGain >= 50 && finalGain <= 0) category = 'pump_dump';
+    else if (maxGain >= 30 && finalGain < maxGain * -0.5) category = 'pump_then_dump';
     else if (maxDrawdown <= -80) category = 'rug';
     else if (maxGain < 50 && finalGain < -30) category = 'slow_bleed';
 
@@ -344,6 +357,7 @@ export function buildFullDataset(
       let category: LabeledToken['outcome']['category'] = 'flat';
       if (maxGain >= 100 && finalGain >= 50) category = 'moon';
       else if (maxGain >= 50 && finalGain <= 0) category = 'pump_dump';
+      else if (maxGain >= 30 && finalGain < maxGain * -0.5) category = 'pump_then_dump';
       else if (maxDrawdown <= -80) category = 'rug';
       else if (maxGain < 50 && finalGain < -30) category = 'slow_bleed';
 
@@ -396,6 +410,7 @@ export function buildFullDataset(
       let category: LabeledToken['outcome']['category'] = 'flat';
       if (maxGain >= 100 && finalGain >= 50) category = 'moon';
       else if (maxGain >= 50 && finalGain <= 0) category = 'pump_dump';
+      else if (maxGain >= 30 && finalGain < maxGain * -0.5) category = 'pump_then_dump';
       else if (maxDrawdown <= -80) category = 'rug';
       else if (maxGain < 50 && finalGain < -30) category = 'slow_bleed';
 
@@ -428,8 +443,9 @@ export function computeCorrelations(dataset: LabeledToken[]): FeatureCorrelation
     'priceSol', 'priceChangeFromInitial', 'realSolReserves', 'totalTxCount',
     'buyCount', 'sellCount', 'uniqueBuyers', 'uniqueSellers',
     'buyVelocity', 'sellRatio', 'buyerTxRatio', 'marketCapSol',
-    'priceAcceleration', 'buyAcceleration', 'txBurst', 'holderConcentration',
+    'priceAcceleration', 'buyAcceleration', 'txBurst', 'sellDistribution',
     'timeSincePeakVelocity', 'buyVelocityTrend',
+    'sellVelocity', 'sellAcceleration', 'topSellerConcentration', 'volumeVelocitySol',
   ];
 
   const results: FeatureCorrelation[] = [];
