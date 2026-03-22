@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { v1Migration } from './v1';
 import { v2Migration } from './v2';
+import { v3Migration } from './v3';
 import { log } from '../../logger';
 
 interface Migration {
@@ -12,6 +13,7 @@ interface Migration {
 const migrations: Migration[] = [
   v1Migration,
   v2Migration,
+  v3Migration,
 ];
 
 /**
