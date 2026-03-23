@@ -38,6 +38,25 @@ export interface ScoringModel {
   baseRate2x: number;
 }
 
+/** Dual scoring model containing both opportunity and risk models */
+export interface DualScoringModel {
+  /** Predicts whether token will 2x — higher = more likely to pump */
+  opportunityModel: ScoringModel;
+  /** Predicts whether token will dump — higher = more likely to rug/dump */
+  riskModel: ScoringModel;
+}
+
+/** Score result for a single token using dual model */
+export interface DualTokenScore {
+  mint: string;
+  /** 0-100: higher = more likely to 2x */
+  opportunityScore: number;
+  /** 0-100: higher = more likely to dump */
+  riskScore: number;
+  featureScores: { name: string; opportunityScore: number; riskScore: number; raw: number }[];
+  signal: 'strong_buy' | 'buy' | 'neutral' | 'avoid';
+}
+
 /** Score result for a single token */
 export interface TokenScore {
   mint: string;
@@ -71,15 +90,24 @@ export interface BacktestReport {
 /**
  * Build a scoring model from feature correlations.
  * Uses top N features by absolute correlation, weighted by their correlation strength.
+ * @param target - 'hitTwoX' (opportunity) or 'isDump' (risk)
  */
 export function buildScoringModel(
   correlations: FeatureCorrelation[],
   dataset: LabeledToken[],
   checkpointSeconds: number,
-  maxFeatures: number = 8
+  maxFeatures: number = 8,
+  target: 'hitTwoX' | 'isDump' = 'hitTwoX'
 ): ScoringModel {
+  const getCorr = (c: FeatureCorrelation) =>
+    target === 'isDump' ? c.correlationWithIsDump : c.correlationWithHit2x;
+  const getThreshold = (c: FeatureCorrelation) =>
+    target === 'isDump' ? c.optimalThresholdDump : c.optimalThreshold;
+
   // Filter to features with meaningful correlation (|r| > 0.05)
-  const meaningful = correlations.filter(c => Math.abs(c.correlationWithHit2x) > 0.05);
+  const meaningful = correlations
+    .filter(c => Math.abs(getCorr(c)) > 0.05)
+    .sort((a, b) => Math.abs(getCorr(b)) - Math.abs(getCorr(a)));
   const topFeatures = meaningful.slice(0, maxFeatures);
 
   // Compute min/max for normalization
@@ -87,12 +115,13 @@ export function buildScoringModel(
     const values = dataset.map(d => d.features[c.featureName as keyof TokenFeatureVector] as number);
     const min = Math.min(...values);
     const max = Math.max(...values);
+    const corr = getCorr(c);
 
     return {
       featureName: c.featureName,
-      weight: Math.abs(c.correlationWithHit2x),
-      direction: c.correlationWithHit2x > 0 ? 'above' : 'below',
-      threshold: Math.abs(c.optimalThreshold),
+      weight: Math.abs(corr),
+      direction: corr > 0 ? 'above' : 'below',
+      threshold: Math.abs(getThreshold(c)),
       min,
       max,
     };
@@ -114,6 +143,21 @@ export function buildScoringModel(
     rules,
     sampleCount: dataset.length,
     baseRate2x: dataset.length > 0 ? (hit2xCount / dataset.length) * 100 : 0,
+  };
+}
+
+/**
+ * Build both opportunity and risk models from a single dataset.
+ */
+export function buildDualScoringModel(
+  correlations: FeatureCorrelation[],
+  dataset: LabeledToken[],
+  checkpointSeconds: number,
+  maxFeatures: number = 8
+): DualScoringModel {
+  return {
+    opportunityModel: buildScoringModel(correlations, dataset, checkpointSeconds, maxFeatures, 'hitTwoX'),
+    riskModel: buildScoringModel(correlations, dataset, checkpointSeconds, maxFeatures, 'isDump'),
   };
 }
 
@@ -157,6 +201,42 @@ export function scoreToken(
     score: Math.round(totalScore * 100) / 100,
     featureScores,
     signal,
+  };
+}
+
+/**
+ * Score a token using the dual model.
+ * Returns both opportunityScore (0-100) and riskScore (0-100).
+ */
+export function scoreTokenDual(
+  dualModel: DualScoringModel,
+  features: TokenFeatureVector
+): DualTokenScore {
+  const oppScore = scoreToken(dualModel.opportunityModel, features);
+  const riskScore = scoreToken(dualModel.riskModel, features);
+
+  // Merge feature scores by name
+  const allFeatureNames = new Set([
+    ...oppScore.featureScores.map(f => f.name),
+    ...riskScore.featureScores.map(f => f.name),
+  ]);
+  const featureScores = [...allFeatureNames].map(name => {
+    const opp = oppScore.featureScores.find(f => f.name === name);
+    const risk = riskScore.featureScores.find(f => f.name === name);
+    return {
+      name,
+      opportunityScore: opp?.score ?? 0,
+      riskScore: risk?.score ?? 0,
+      raw: opp?.raw ?? risk?.raw ?? 0,
+    };
+  });
+
+  return {
+    mint: features.mint,
+    opportunityScore: oppScore.score,
+    riskScore: riskScore.score,
+    featureScores,
+    signal: oppScore.signal,
   };
 }
 

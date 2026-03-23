@@ -1433,23 +1433,45 @@ export function getDashboardHtml(): string {
         }
         html += '</div>';
 
-        // ─── Scoring Model Rules ───
-        html += '<div class="analysis-section"><h3>Scoring Model Rules</h3>';
-        html += '<p style="font-size:12px;color:#6666aa;margin-bottom:14px">These are the features and weights the model uses to score tokens at ' + checkpoint + 's after creation.</p>';
-        html += '<div class="model-rules">';
-        data.model.rules.forEach(function(rule) {
-          var dir = rule.direction === 'above' ? 'Higher is better' : 'Lower is better';
-          html += '<div class="rule-card">' +
-            '<div class="rule-name">' + esc(rule.featureName) + '</div>' +
-            '<div class="rule-detail">' + dir + ' | Threshold: ' + rule.threshold.toFixed(4) + '</div>' +
-            '<div class="rule-weight-bar"><div class="rule-weight-fill" style="width:' + (rule.weight * 100) + '%"></div></div>' +
-            '<div style="font-size:11px;color:#555577;margin-top:2px">' + (rule.weight * 100).toFixed(1) + '% weight</div>' +
-          '</div>';
-        });
-        html += '</div></div>';
+        // ─── Dual Model Rules ───
+        function renderModelRules(model, title, subtitle, accentColor) {
+          var rulesHtml = '<div class="analysis-section"><h3>' + title + '</h3>';
+          rulesHtml += '<p style="font-size:12px;color:#6666aa;margin-bottom:14px">' + subtitle + '</p>';
+          rulesHtml += '<div class="model-rules">';
+          model.rules.forEach(function(rule) {
+            var dir = rule.direction === 'above' ? 'Higher is better' : 'Lower is better';
+            rulesHtml += '<div class="rule-card">' +
+              '<div class="rule-name" style="color:' + accentColor + '">' + esc(rule.featureName) + '</div>' +
+              '<div class="rule-detail">' + dir + ' | Threshold: ' + rule.threshold.toFixed(4) + '</div>' +
+              '<div class="rule-weight-bar"><div class="rule-weight-fill" style="width:' + (rule.weight * 100) + '%;background:' + accentColor + '"></div></div>' +
+              '<div style="font-size:11px;color:#555577;margin-top:2px">' + (rule.weight * 100).toFixed(1) + '% weight</div>' +
+            '</div>';
+          });
+          rulesHtml += '</div></div>';
+          return rulesHtml;
+        }
+
+        var oppModel = data.opportunityModel || data.model;
+        var riskModel = data.riskModel;
+
+        html += renderModelRules(
+          oppModel,
+          'Opportunity Model Rules',
+          'Top features predicting 2x outcome at ' + checkpoint + 's — higher score = more likely to pump.',
+          '#00e676'
+        );
+
+        if (riskModel && riskModel.rules && riskModel.rules.length > 0) {
+          html += renderModelRules(
+            riskModel,
+            'Risk Model Rules',
+            'Top features predicting dump/rug at ' + checkpoint + 's — higher score = more likely to dump. These are the sell-pressure signals.',
+            '#ff5252'
+          );
+        }
 
         // ─── Backtest Results Table ───
-        html += '<div class="analysis-section"><h3>Backtest Results by Score Threshold</h3>';
+        html += '<div class="analysis-section"><h3>Backtest Results by Opportunity Score Threshold</h3>';
         html += '<table class="backtest-table"><thead><tr>' +
           '<th style="text-align:left">Threshold</th><th>Tokens</th><th>Hit 2x</th><th>2x Rate</th><th>Avg Max Gain</th><th>Avg Final Gain</th><th>Avg Drawdown</th>' +
           '</tr></thead><tbody>';
@@ -1468,6 +1490,24 @@ export function getDashboardHtml(): string {
           '</tr>';
         });
         html += '</tbody></table></div>';
+
+        // ─── Risk Threshold Analysis ───
+        if (data.riskAnalysis && data.riskAnalysis.length > 0) {
+          html += '<div class="analysis-section"><h3>Risk Filter Analysis</h3>';
+          html += '<p style="font-size:12px;color:#6666aa;margin-bottom:14px">At opportunity threshold ' + best.scoreThreshold + ', applying different risk score caps. Tokens must have riskScore &lt; threshold to pass.</p>';
+          html += '<table class="backtest-table"><thead><tr>' +
+            '<th style="text-align:left">Risk Cap</th><th>Tokens Remaining</th><th>2x Rate</th><th>Dump Rate</th>' +
+            '</tr></thead><tbody>';
+          data.riskAnalysis.forEach(function(r) {
+            html += '<tr>' +
+              '<td style="text-align:left">riskScore &lt; ' + r.riskThreshold + '</td>' +
+              '<td>' + r.tokensRemaining + '</td>' +
+              '<td class="price-up">' + r.hit2xRate.toFixed(1) + '%</td>' +
+              '<td class="price-down">' + r.dumpRate.toFixed(1) + '%</td>' +
+            '</tr>';
+          });
+          html += '</tbody></table></div>';
+        }
 
         // ─── Charts: Hit Rate vs Threshold & Category Distribution ───
         html += '<div class="charts-grid">' +
