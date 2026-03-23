@@ -64,6 +64,8 @@ export interface FeatureCorrelation {
   correlationWithHit2x: number;
   /** Point-biserial correlation with isDump (range -1 to 1) */
   correlationWithIsDump: number;
+  /** Pearson correlation with maxDrawdownPct (range -1 to 1; negative = feature predicts more severe dump) */
+  correlationWithMaxDrawdown: number;
   /** Mean feature value for tokens that hit 2x */
   meanWhenHit2x: number;
   /** Mean feature value for tokens that did NOT hit 2x */
@@ -78,6 +80,8 @@ export interface FeatureCorrelation {
   optimalThresholdDump: number;
   /** Accuracy at optimal isDump threshold */
   accuracyAtThresholdDump: number;
+  /** Optimal threshold for severe drawdown prediction (maxDrawdownPct <= -50) */
+  optimalThresholdDrawdown: number;
 }
 
 /** Optional time range filter for analysis */
@@ -518,18 +522,41 @@ export function computeCorrelations(dataset: LabeledToken[]): FeatureCorrelation
     return { correlation, mean1, mean0, separationRatio, optimalThreshold: bestThreshold, accuracyAtThreshold: bestAccuracy };
   }
 
+  /** Compute Pearson correlation between a feature and a continuous outcome */
+  function computePearsonCorrelation(xValues: number[], yValues: number[]): number {
+    const n = xValues.length;
+    if (n < 2) return 0;
+    const mx = xValues.reduce((a, b) => a + b, 0) / n;
+    const my = yValues.reduce((a, b) => a + b, 0) / n;
+    const num = xValues.reduce((sum, x, i) => sum + (x - mx) * (yValues[i] - my), 0);
+    const dx = Math.sqrt(xValues.reduce((sum, x) => sum + (x - mx) ** 2, 0));
+    const dy = Math.sqrt(yValues.reduce((sum, y) => sum + (y - my) ** 2, 0));
+    return dx > 0 && dy > 0 ? num / (dx * dy) : 0;
+  }
+
+  /** Find optimal feature threshold to predict severe drawdown (maxDrawdownPct <= -50) */
+  function computeDrawdownThreshold(values: number[], drawdownValues: number[]): number {
+    const severeDumpLabels = drawdownValues.map(d => d <= -50 ? 1 : 0);
+    const result = computePBCorrelation(values, severeDumpLabels);
+    return result.optimalThreshold;
+  }
+
   for (const name of featureNames) {
     const values = dataset.map(d => d.features[name] as number);
     const hit2xLabels = dataset.map(d => d.outcome.hitTwoX ? 1 : 0);
     const dumpLabels = dataset.map(d => d.outcome.isDump ? 1 : 0);
+    const drawdownValues = dataset.map(d => d.outcome.maxDrawdownPct);
 
     const hit2x = computePBCorrelation(values, hit2xLabels);
     const dump = computePBCorrelation(values, dumpLabels);
+    const pearsonDrawdown = computePearsonCorrelation(values, drawdownValues);
+    const thresholdDrawdown = computeDrawdownThreshold(values, drawdownValues);
 
     results.push({
       featureName: name,
       correlationWithHit2x: hit2x.correlation,
       correlationWithIsDump: dump.correlation,
+      correlationWithMaxDrawdown: pearsonDrawdown,
       meanWhenHit2x: hit2x.mean1,
       meanWhenNoHit2x: hit2x.mean0,
       separationRatio: hit2x.separationRatio,
@@ -537,6 +564,7 @@ export function computeCorrelations(dataset: LabeledToken[]): FeatureCorrelation
       accuracyAtThreshold: hit2x.accuracyAtThreshold,
       optimalThresholdDump: dump.optimalThreshold,
       accuracyAtThresholdDump: dump.accuracyAtThreshold,
+      optimalThresholdDrawdown: thresholdDrawdown,
     });
   }
 

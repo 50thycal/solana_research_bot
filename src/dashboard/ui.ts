@@ -1465,7 +1465,7 @@ export function getDashboardHtml(): string {
           html += renderModelRules(
             riskModel,
             'Risk Model Rules',
-            'Top features predicting dump/rug at ' + checkpoint + 's — higher score = more likely to dump. These are the sell-pressure signals.',
+            'Top features correlating with severe drawdown at ' + checkpoint + 's — higher score = more likely to hard dump. Ranked by correlation with maxDrawdownPct (continuous severity, not binary isDump).',
             '#ff5252'
           );
         }

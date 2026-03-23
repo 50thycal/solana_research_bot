@@ -90,19 +90,19 @@ export interface BacktestReport {
 /**
  * Build a scoring model from feature correlations.
  * Uses top N features by absolute correlation, weighted by their correlation strength.
- * @param target - 'hitTwoX' (opportunity) or 'isDump' (risk)
+ * @param target - 'hitTwoX' (opportunity) or 'maxDrawdownPct' (risk)
  */
 export function buildScoringModel(
   correlations: FeatureCorrelation[],
   dataset: LabeledToken[],
   checkpointSeconds: number,
   maxFeatures: number = 8,
-  target: 'hitTwoX' | 'isDump' = 'hitTwoX'
+  target: 'hitTwoX' | 'maxDrawdownPct' = 'hitTwoX'
 ): ScoringModel {
   const getCorr = (c: FeatureCorrelation) =>
-    target === 'isDump' ? c.correlationWithIsDump : c.correlationWithHit2x;
+    target === 'maxDrawdownPct' ? c.correlationWithMaxDrawdown : c.correlationWithHit2x;
   const getThreshold = (c: FeatureCorrelation) =>
-    target === 'isDump' ? c.optimalThresholdDump : c.optimalThreshold;
+    target === 'maxDrawdownPct' ? c.optimalThresholdDrawdown : c.optimalThreshold;
 
   // Filter to features with meaningful correlation (|r| > 0.05)
   const meaningful = correlations
@@ -120,7 +120,10 @@ export function buildScoringModel(
     return {
       featureName: c.featureName,
       weight: Math.abs(corr),
-      direction: corr > 0 ? 'above' : 'below',
+      // For maxDrawdownPct (negative = worse dump): negative correlation means
+      // higher feature value predicts more severe dump → direction 'above' (riskier).
+      // For hitTwoX: positive correlation means higher value predicts pump → 'above'.
+      direction: target === 'maxDrawdownPct' ? (corr < 0 ? 'above' : 'below') : (corr > 0 ? 'above' : 'below'),
       threshold: Math.abs(getThreshold(c)),
       min,
       max,
@@ -157,7 +160,7 @@ export function buildDualScoringModel(
 ): DualScoringModel {
   return {
     opportunityModel: buildScoringModel(correlations, dataset, checkpointSeconds, maxFeatures, 'hitTwoX'),
-    riskModel: buildScoringModel(correlations, dataset, checkpointSeconds, maxFeatures, 'isDump'),
+    riskModel: buildScoringModel(correlations, dataset, checkpointSeconds, maxFeatures, 'maxDrawdownPct'),
   };
 }
 
