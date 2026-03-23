@@ -47,6 +47,8 @@ export interface LabeledToken {
   outcome: {
     entryTriggered: boolean;
     hitTwoX: boolean;
+    /** True when category is rug, pump_dump, or pump_then_dump */
+    isDump: boolean;
     maxGainPct: number;
     maxDrawdownPct: number;
     finalGainPct: number;
@@ -60,6 +62,8 @@ export interface FeatureCorrelation {
   featureName: string;
   /** Point-biserial correlation with hit_2x (range -1 to 1) */
   correlationWithHit2x: number;
+  /** Point-biserial correlation with isDump (range -1 to 1) */
+  correlationWithIsDump: number;
   /** Mean feature value for tokens that hit 2x */
   meanWhenHit2x: number;
   /** Mean feature value for tokens that did NOT hit 2x */
@@ -70,6 +74,10 @@ export interface FeatureCorrelation {
   optimalThreshold: number;
   /** Accuracy at optimal threshold */
   accuracyAtThreshold: number;
+  /** Optimal threshold for isDump prediction */
+  optimalThresholdDump: number;
+  /** Accuracy at optimal isDump threshold */
+  accuracyAtThresholdDump: number;
 }
 
 /** Optional time range filter for analysis */
@@ -297,6 +305,7 @@ export function buildLabeledDataset(
       outcome: {
         entryTriggered: true,
         hitTwoX: maxGain >= 100,
+        isDump: category === 'rug' || category === 'pump_dump' || category === 'pump_then_dump',
         maxGainPct: maxGain,
         maxDrawdownPct: maxDrawdown,
         finalGainPct: finalGain,
@@ -366,6 +375,7 @@ export function buildFullDataset(
         outcome: {
           entryTriggered: o.entry_triggered === 1,
           hitTwoX: maxGain >= 100,
+          isDump: category === 'rug' || category === 'pump_dump' || category === 'pump_then_dump',
           maxGainPct: maxGain,
           maxDrawdownPct: maxDrawdown,
           finalGainPct: finalGain,
@@ -419,6 +429,7 @@ export function buildFullDataset(
         outcome: {
           entryTriggered: false,
           hitTwoX: maxGain >= 100,
+          isDump: category === 'rug' || category === 'pump_dump' || category === 'pump_then_dump',
           maxGainPct: maxGain,
           maxDrawdownPct: maxDrawdown,
           finalGainPct: finalGain,
@@ -450,30 +461,25 @@ export function computeCorrelations(dataset: LabeledToken[]): FeatureCorrelation
 
   const results: FeatureCorrelation[] = [];
 
-  for (const name of featureNames) {
-    const values = dataset.map(d => d.features[name] as number);
-    const labels = dataset.map(d => d.outcome.hitTwoX ? 1 : 0);
-
-    // Point-biserial correlation
+  /** Compute point-biserial correlation and optimal threshold for a binary label array */
+  function computePBCorrelation(values: number[], binaryLabels: number[]): {
+    correlation: number;
+    mean1: number;
+    mean0: number;
+    separationRatio: number;
+    optimalThreshold: number;
+    accuracyAtThreshold: number;
+  } {
     const n = values.length;
-    const n1 = labels.filter(l => l === 1).length;
+    const n1 = binaryLabels.filter(l => l === 1).length;
     const n0 = n - n1;
 
     if (n1 === 0 || n0 === 0) {
-      results.push({
-        featureName: name,
-        correlationWithHit2x: 0,
-        meanWhenHit2x: 0,
-        meanWhenNoHit2x: 0,
-        separationRatio: 0,
-        optimalThreshold: 0,
-        accuracyAtThreshold: 0,
-      });
-      continue;
+      return { correlation: 0, mean1: 0, mean0: 0, separationRatio: 0, optimalThreshold: 0, accuracyAtThreshold: 0 };
     }
 
-    const mean1 = values.filter((_, i) => labels[i] === 1).reduce((a, b) => a + b, 0) / n1;
-    const mean0 = values.filter((_, i) => labels[i] === 0).reduce((a, b) => a + b, 0) / n0;
+    const mean1 = values.filter((_, i) => binaryLabels[i] === 1).reduce((a, b) => a + b, 0) / n1;
+    const mean0 = values.filter((_, i) => binaryLabels[i] === 0).reduce((a, b) => a + b, 0) / n0;
     const meanAll = values.reduce((a, b) => a + b, 0) / n;
     const stdAll = Math.sqrt(values.reduce((sum, v) => sum + (v - meanAll) ** 2, 0) / n);
 
@@ -490,36 +496,47 @@ export function computeCorrelations(dataset: LabeledToken[]): FeatureCorrelation
 
     for (let i = 0; i < sorted.length - 1; i++) {
       const threshold = (sorted[i] + sorted[i + 1]) / 2;
-
-      // Try both directions (feature > threshold = positive, or < threshold = positive)
       for (const direction of [1, -1]) {
         let tp = 0, tn = 0, fp = 0, fn = 0;
         for (let j = 0; j < n; j++) {
           const predicted = direction === 1 ? (values[j] >= threshold ? 1 : 0) : (values[j] < threshold ? 1 : 0);
-          if (predicted === 1 && labels[j] === 1) tp++;
-          else if (predicted === 0 && labels[j] === 0) tn++;
-          else if (predicted === 1 && labels[j] === 0) fp++;
+          if (predicted === 1 && binaryLabels[j] === 1) tp++;
+          else if (predicted === 0 && binaryLabels[j] === 0) tn++;
+          else if (predicted === 1 && binaryLabels[j] === 0) fp++;
           else fn++;
         }
         const sensitivity = tp + fn > 0 ? tp / (tp + fn) : 0;
         const specificity = tn + fp > 0 ? tn / (tn + fp) : 0;
         const balancedAcc = (sensitivity + specificity) / 2;
-
         if (balancedAcc > bestAccuracy) {
           bestAccuracy = balancedAcc;
-          bestThreshold = direction === 1 ? threshold : -threshold; // negative = "below threshold is positive"
+          bestThreshold = direction === 1 ? threshold : -threshold;
         }
       }
     }
 
+    return { correlation, mean1, mean0, separationRatio, optimalThreshold: bestThreshold, accuracyAtThreshold: bestAccuracy };
+  }
+
+  for (const name of featureNames) {
+    const values = dataset.map(d => d.features[name] as number);
+    const hit2xLabels = dataset.map(d => d.outcome.hitTwoX ? 1 : 0);
+    const dumpLabels = dataset.map(d => d.outcome.isDump ? 1 : 0);
+
+    const hit2x = computePBCorrelation(values, hit2xLabels);
+    const dump = computePBCorrelation(values, dumpLabels);
+
     results.push({
       featureName: name,
-      correlationWithHit2x: correlation,
-      meanWhenHit2x: mean1,
-      meanWhenNoHit2x: mean0,
-      separationRatio,
-      optimalThreshold: bestThreshold,
-      accuracyAtThreshold: bestAccuracy,
+      correlationWithHit2x: hit2x.correlation,
+      correlationWithIsDump: dump.correlation,
+      meanWhenHit2x: hit2x.mean1,
+      meanWhenNoHit2x: hit2x.mean0,
+      separationRatio: hit2x.separationRatio,
+      optimalThreshold: hit2x.optimalThreshold,
+      accuracyAtThreshold: hit2x.accuracyAtThreshold,
+      optimalThresholdDump: dump.optimalThreshold,
+      accuracyAtThresholdDump: dump.accuracyAtThreshold,
     });
   }
 

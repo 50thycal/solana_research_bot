@@ -11,13 +11,17 @@ export {
 
 export {
   buildScoringModel,
+  buildDualScoringModel,
   scoreToken,
+  scoreTokenDual,
   backtestModel,
   formatBacktestReport,
   computeScoreTrajectory,
   type ScoringModel,
+  type DualScoringModel,
   type ScoringRule,
   type TokenScore,
+  type DualTokenScore,
   type ScoreTrajectory,
   type BacktestResult,
   type BacktestReport,

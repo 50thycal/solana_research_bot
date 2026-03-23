@@ -7,6 +7,7 @@ import {
   buildFullDataset,
   computeCorrelations,
   buildScoringModel,
+  buildDualScoringModel,
   scoreToken,
   backtestModel,
   computeScoreTrajectory,
@@ -307,13 +308,22 @@ function getCorrelations(db: Database.Database, url: URL, res: http.ServerRespon
   }
 
   const correlations = computeCorrelations(dataset);
+  const dumpCount = dataset.filter(d => d.outcome.isDump).length;
+
+  // Two sorted views: by hitTwoX correlation (default) and by isDump correlation
+  const correlationsByDump = [...correlations].sort(
+    (a, b) => Math.abs(b.correlationWithIsDump) - Math.abs(a.correlationWithIsDump)
+  );
 
   jsonResponse(res, {
     checkpoint,
     datasetSize: dataset.length,
     hit2xCount: dataset.filter(d => d.outcome.hitTwoX).length,
     hit2xRate: (dataset.filter(d => d.outcome.hitTwoX).length / dataset.length) * 100,
+    dumpCount,
+    dumpRate: dataset.length > 0 ? (dumpCount / dataset.length) * 100 : 0,
     correlations,
+    correlationsByDump,
   });
 }
 
@@ -337,10 +347,33 @@ function getBacktest(db: Database.Database, url: URL, res: http.ServerResponse):
   }
 
   const correlations = computeCorrelations(dataset);
-  const model = buildScoringModel(correlations, dataset, checkpoint);
-  const report = backtestModel(model, dataset);
+  const dualModel = buildDualScoringModel(correlations, dataset, checkpoint);
+  const report = backtestModel(dualModel.opportunityModel, dataset);
 
-  jsonResponse(res, report);
+  // For the recommended opportunity threshold, compute dump rate at different risk thresholds
+  const bestOppThreshold = report.bestThreshold.scoreThreshold;
+  const riskThresholds = [50, 60, 70];
+  const riskAnalysis = riskThresholds.map(riskThreshold => {
+    const filtered = dataset.filter(d => {
+      const oppScore = scoreToken(dualModel.opportunityModel, d.features).score;
+      const riskScore = scoreToken(dualModel.riskModel, d.features).score;
+      return oppScore >= bestOppThreshold && riskScore < riskThreshold;
+    });
+    const hit2x = filtered.filter(d => d.outcome.hitTwoX).length;
+    const dumps = filtered.filter(d => d.outcome.isDump).length;
+    return {
+      riskThreshold,
+      tokensRemaining: filtered.length,
+      hit2xRate: filtered.length > 0 ? (hit2x / filtered.length) * 100 : 0,
+      dumpRate: filtered.length > 0 ? (dumps / filtered.length) * 100 : 0,
+    };
+  });
+
+  jsonResponse(res, {
+    ...report,
+    riskModel: dualModel.riskModel,
+    riskAnalysis,
+  });
 }
 
 /**
@@ -409,20 +442,29 @@ function getModel(db: Database.Database, url: URL, res: http.ServerResponse): vo
   }
 
   const correlations = computeCorrelations(dataset);
-  const model = buildScoringModel(correlations, dataset, checkpoint);
+  const dualModel = buildDualScoringModel(correlations, dataset, checkpoint);
+  const dumpCount = dataset.filter(d => d.outcome.isDump).length;
+
+  const datasetStats = {
+    totalTokens: dataset.length,
+    hit2xCount: dataset.filter(d => d.outcome.hitTwoX).length,
+    hit2xRate: (dataset.filter(d => d.outcome.hitTwoX).length / dataset.length) * 100,
+    dumpCount,
+    dumpRate: dataset.length > 0 ? (dumpCount / dataset.length) * 100 : 0,
+    categoryBreakdown: dataset.reduce((acc, d) => {
+      acc[d.outcome.category] = (acc[d.outcome.category] ?? 0) + 1;
+      return acc;
+    }, {} as Record<string, number>),
+  };
 
   jsonResponse(res, {
-    model,
-    correlations: correlations.slice(0, 10), // Top 10 features
-    datasetStats: {
-      totalTokens: dataset.length,
-      hit2xCount: dataset.filter(d => d.outcome.hitTwoX).length,
-      hit2xRate: (dataset.filter(d => d.outcome.hitTwoX).length / dataset.length) * 100,
-      categoryBreakdown: dataset.reduce((acc, d) => {
-        acc[d.outcome.category] = (acc[d.outcome.category] ?? 0) + 1;
-        return acc;
-      }, {} as Record<string, number>),
-    },
+    // Backward-compatible: legacy consumers get the opportunity model as `model`
+    model: dualModel.opportunityModel,
+    // Dual model response
+    opportunityModel: dualModel.opportunityModel,
+    riskModel: dualModel.riskModel,
+    correlations: correlations.slice(0, 10),
+    datasetStats,
   });
 }
 
