@@ -64,6 +64,8 @@ export interface FeatureCorrelation {
   correlationWithHit2x: number;
   /** Point-biserial correlation with isDump (range -1 to 1) */
   correlationWithIsDump: number;
+  /** Pearson correlation with negated maxDrawdownPct (range -1 to 1) — higher = more drawdown */
+  correlationWithMaxDrawdown: number;
   /** Mean feature value for tokens that hit 2x */
   meanWhenHit2x: number;
   /** Mean feature value for tokens that did NOT hit 2x */
@@ -78,6 +80,10 @@ export interface FeatureCorrelation {
   optimalThresholdDump: number;
   /** Accuracy at optimal isDump threshold */
   accuracyAtThresholdDump: number;
+  /** Optimal threshold for maxDrawdownPct prediction */
+  optimalThresholdDrawdown: number;
+  /** Accuracy at optimal maxDrawdownPct threshold (median-split) */
+  accuracyAtThresholdDrawdown: number;
 }
 
 /** Optional time range filter for analysis */
@@ -518,6 +524,31 @@ export function computeCorrelations(dataset: LabeledToken[]): FeatureCorrelation
     return { correlation, mean1, mean0, separationRatio, optimalThreshold: bestThreshold, accuracyAtThreshold: bestAccuracy };
   }
 
+  /** Compute Pearson correlation between two numeric arrays */
+  function computePearson(xs: number[], ys: number[]): number {
+    const n = xs.length;
+    if (n < 3) return 0;
+    const meanX = xs.reduce((a, b) => a + b, 0) / n;
+    const meanY = ys.reduce((a, b) => a + b, 0) / n;
+    let num = 0, denX = 0, denY = 0;
+    for (let i = 0; i < n; i++) {
+      const dx = xs[i] - meanX;
+      const dy = ys[i] - meanY;
+      num += dx * dy;
+      denX += dx * dx;
+      denY += dy * dy;
+    }
+    const den = Math.sqrt(denX * denY);
+    return den > 0 ? num / den : 0;
+  }
+
+  // Negate maxDrawdownPct so more negative drawdowns become higher values (= more risky)
+  const negDrawdownLabels = dataset.map(d => -d.outcome.maxDrawdownPct);
+  // Median-split for threshold optimization: tokens above median negated drawdown are "high drawdown"
+  const sortedDrawdown = [...negDrawdownLabels].sort((a, b) => a - b);
+  const medianDrawdown = sortedDrawdown[Math.floor(sortedDrawdown.length / 2)];
+  const drawdownBinaryLabels = negDrawdownLabels.map(v => v >= medianDrawdown ? 1 : 0);
+
   for (const name of featureNames) {
     const values = dataset.map(d => d.features[name] as number);
     const hit2xLabels = dataset.map(d => d.outcome.hitTwoX ? 1 : 0);
@@ -525,11 +556,14 @@ export function computeCorrelations(dataset: LabeledToken[]): FeatureCorrelation
 
     const hit2x = computePBCorrelation(values, hit2xLabels);
     const dump = computePBCorrelation(values, dumpLabels);
+    const drawdownCorr = computePearson(values, negDrawdownLabels);
+    const drawdownThreshold = computePBCorrelation(values, drawdownBinaryLabels);
 
     results.push({
       featureName: name,
       correlationWithHit2x: hit2x.correlation,
       correlationWithIsDump: dump.correlation,
+      correlationWithMaxDrawdown: drawdownCorr,
       meanWhenHit2x: hit2x.mean1,
       meanWhenNoHit2x: hit2x.mean0,
       separationRatio: hit2x.separationRatio,
@@ -537,6 +571,8 @@ export function computeCorrelations(dataset: LabeledToken[]): FeatureCorrelation
       accuracyAtThreshold: hit2x.accuracyAtThreshold,
       optimalThresholdDump: dump.optimalThreshold,
       accuracyAtThresholdDump: dump.accuracyAtThreshold,
+      optimalThresholdDrawdown: drawdownThreshold.optimalThreshold,
+      accuracyAtThresholdDrawdown: drawdownThreshold.accuracyAtThreshold,
     });
   }
 
