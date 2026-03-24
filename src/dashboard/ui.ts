@@ -1465,7 +1465,7 @@ export function getDashboardHtml(): string {
           html += renderModelRules(
             riskModel,
             'Risk Model Rules',
-            'Top features correlated with maxDrawdownPct at ' + checkpoint + 's — higher score = deeper drawdown expected. Continuous target replaces binary isDump.',
+            'Top sell-side features correlated with maxDrawdownPct at ' + checkpoint + 's — restricted to sell-pressure signals only.',
             '#ff5252'
           );
         }

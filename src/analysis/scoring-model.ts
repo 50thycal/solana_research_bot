@@ -146,8 +146,21 @@ export function buildScoringModel(
   };
 }
 
+/** Sell-side features allowed in the risk model */
+const SELL_SIDE_FEATURES = new Set([
+  'sellVelocity',
+  'sellAcceleration',
+  'topSellerConcentration',
+  'sellDistribution',
+  'uniqueSellers',
+  'sellRatio',
+  'buyerTxRatio',
+]);
+
 /**
  * Build both opportunity and risk models from a single dataset.
+ * The opportunity model uses all features; the risk model is restricted
+ * to sell-side features only to avoid overlap.
  */
 export function buildDualScoringModel(
   correlations: FeatureCorrelation[],
@@ -155,9 +168,10 @@ export function buildDualScoringModel(
   checkpointSeconds: number,
   maxFeatures: number = 8
 ): DualScoringModel {
+  const sellSideCorrelations = correlations.filter(c => SELL_SIDE_FEATURES.has(c.featureName));
   return {
     opportunityModel: buildScoringModel(correlations, dataset, checkpointSeconds, maxFeatures, 'hitTwoX'),
-    riskModel: buildScoringModel(correlations, dataset, checkpointSeconds, maxFeatures, 'maxDrawdownPct'),
+    riskModel: buildScoringModel(sellSideCorrelations, dataset, checkpointSeconds, maxFeatures, 'maxDrawdownPct'),
   };
 }
 
