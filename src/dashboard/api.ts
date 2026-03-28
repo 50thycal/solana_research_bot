@@ -6,9 +6,9 @@ import {
   buildLabeledDataset,
   buildFullDataset,
   computeCorrelations,
-  buildScoringModel,
   buildDualScoringModel,
   scoreToken,
+  scoreTokenDual,
   backtestModel,
   computeScoreTrajectory,
   type TimeRange,
@@ -400,7 +400,7 @@ function getScore(db: Database.Database, url: URL, res: http.ServerResponse): vo
   }
 
   const correlations = computeCorrelations(dataset);
-  const model = buildScoringModel(correlations, dataset, checkpoint);
+  const dualModel = buildDualScoringModel(correlations, dataset, checkpoint);
 
   // Get features for the requested token
   const features = extractFeatureVectors(db, checkpoint);
@@ -410,14 +410,28 @@ function getScore(db: Database.Database, url: URL, res: http.ServerResponse): vo
     return errorResponse(res, `Token ${mint} not found at ${checkpoint}s checkpoint`, 404);
   }
 
-  const score = scoreToken(model, tokenFeatures);
+  const dualScore = scoreTokenDual(dualModel, tokenFeatures);
+  // Legacy compatibility: keep returning a single `score` field that maps
+  // to the opportunity score used by older trading bot clients.
+  const score = scoreToken(dualModel.opportunityModel, tokenFeatures);
 
   jsonResponse(res, {
-    ...score,
+    ...dualScore,
+    score: score.score,
     model: {
-      checkpointSeconds: model.checkpointSeconds,
-      sampleCount: model.sampleCount,
-      baseRate2x: model.baseRate2x,
+      checkpointSeconds: dualModel.opportunityModel.checkpointSeconds,
+      sampleCount: dualModel.opportunityModel.sampleCount,
+      baseRate2x: dualModel.opportunityModel.baseRate2x,
+    },
+    opportunityModel: {
+      checkpointSeconds: dualModel.opportunityModel.checkpointSeconds,
+      sampleCount: dualModel.opportunityModel.sampleCount,
+      baseRate2x: dualModel.opportunityModel.baseRate2x,
+    },
+    riskModel: {
+      checkpointSeconds: dualModel.riskModel.checkpointSeconds,
+      sampleCount: dualModel.riskModel.sampleCount,
+      baseRate2x: dualModel.riskModel.baseRate2x,
     },
   });
 }
