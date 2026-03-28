@@ -245,12 +245,19 @@ export function scoreTokenDual(
     };
   });
 
+  // Combine opportunity and risk into a single actionable signal.
+  // High risk should override buy signals from the opportunity model.
+  let signal: DualTokenScore['signal'] = 'neutral';
+  if (riskScore.score >= 70 || oppScore.score < 35) signal = 'avoid';
+  else if (oppScore.score >= 70 && riskScore.score < 40) signal = 'strong_buy';
+  else if (oppScore.score >= 55 && riskScore.score < 55) signal = 'buy';
+
   return {
     mint: features.mint,
     opportunityScore: oppScore.score,
     riskScore: riskScore.score,
     featureScores,
-    signal: oppScore.signal,
+    signal,
   };
 }
 
